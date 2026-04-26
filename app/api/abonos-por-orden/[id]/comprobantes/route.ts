@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { addComprobanteToAbonoPorOrdenById } from "@/lib/airtable";
+import {
+  addComprobanteToAbonoPorOrdenById,
+  deleteComprobanteFromAbonoPorOrdenById,
+} from "@/lib/airtable";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +62,53 @@ export async function POST(request: Request, { params }: Params) {
     );
   } catch (error) {
     console.error("Error al agregar comprobante al abono", error);
+    const message = error instanceof Error ? error.message : "Error inesperado";
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
+  }
+}
+
+const resolveAttachmentIdFromDeleteRequest = async (request: Request) => {
+  const fromQuery = new URL(request.url).searchParams.get("attachmentId")?.trim();
+  if (fromQuery) return fromQuery;
+
+  const contentType = (request.headers.get("content-type") ?? "").toLowerCase();
+  if (contentType.includes("application/json")) {
+    try {
+      const body = (await request.json()) as { attachmentId?: unknown } | null;
+      if (typeof body?.attachmentId === "string" && body.attachmentId.trim()) {
+        return body.attachmentId.trim();
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+};
+
+export async function DELETE(request: Request, { params }: Params) {
+  const { id } = await params;
+
+  if (!id) {
+    return NextResponse.json(
+      { success: false, error: "Falta id de abono por orden" },
+      { status: 400 }
+    );
+  }
+
+  const attachmentId = await resolveAttachmentIdFromDeleteRequest(request);
+  if (!attachmentId) {
+    return NextResponse.json({ success: false, error: "Falta id del adjunto" }, { status: 400 });
+  }
+
+  try {
+    const result = await deleteComprobanteFromAbonoPorOrdenById({
+      abonoPorOrdenRecordId: id,
+      attachmentId,
+    });
+    return NextResponse.json({ success: true, data: result.abono });
+  } catch (error) {
+    console.error("Error al eliminar comprobante del abono", error);
     const message = error instanceof Error ? error.message : "Error inesperado";
     return NextResponse.json({ success: false, error: message }, { status: 500 });
   }

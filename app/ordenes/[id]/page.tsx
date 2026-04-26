@@ -131,6 +131,26 @@ const parseNumberInput = (value: string): number | null => {
 const todayDateInputValue = () => new Date().toISOString().slice(0, 10);
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+type ApiResponsePayload = {
+  success?: boolean;
+  error?: string;
+  warning?: string | null;
+  data?: unknown;
+};
+
+const parseApiResponseSafely = async (res: Response): Promise<ApiResponsePayload | null> => {
+  const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+  if (!contentType.includes("application/json")) {
+    return null;
+  }
+
+  try {
+    return (await res.json()) as ApiResponsePayload;
+  } catch {
+    return null;
+  }
+};
+
 const INITIAL_SEARCH_SUGGESTIONS = 5;
 const MAX_SEARCH_RESULTS = 12;
 const ABONO_METODOS_PAGO = ["Efectivo", "Transferencia", "Tarjeta", "PayPal"] as const;
@@ -463,7 +483,6 @@ export default function OrdenDetallePage() {
   const [abonoDeleteConfirmId, setAbonoDeleteConfirmId] = useState<string | null>(null);
   const [abonoDeletingId, setAbonoDeletingId] = useState<string | null>(null);
   const [abonoDeleteError, setAbonoDeleteError] = useState<string | null>(null);
-  const [abonoAdjuntosOpen, setAbonoAdjuntosOpen] = useState<Record<string, boolean>>({});
   const [abonoAdjuntoUploadingId, setAbonoAdjuntoUploadingId] = useState<string | null>(null);
   const [abonoAdjuntoDeletingKey, setAbonoAdjuntoDeletingKey] = useState<string | null>(null);
   const [abonoAdjuntoError, setAbonoAdjuntoError] = useState<Record<string, string | null>>({});
@@ -1047,11 +1066,6 @@ export default function OrdenDetallePage() {
           : prev
       );
       setAbonoDeleteConfirmId(null);
-      setAbonoAdjuntosOpen((prev) => {
-        const copy = { ...prev };
-        delete copy[abonoPorOrdenId];
-        return copy;
-      });
       if (comprobanteViewer?.abonoId === abonoPorOrdenId) {
         closeComprobanteViewer();
       }
@@ -1145,17 +1159,16 @@ export default function OrdenDetallePage() {
         method: "POST",
         body: formData,
       });
-      const json = await res.json();
+      const payload = await parseApiResponseSafely(res);
 
-      if (!res.ok || !json.success) {
-        throw new Error(json.error || "No se pudo agregar el comprobante");
+      if (!res.ok || !payload?.success) {
+        throw new Error(payload?.error?.trim() || "No se pudo agregar el comprobante");
       }
 
-      replaceAbonoInState(json.data as AbonoItem);
-      setAbonoAdjuntosOpen((prev) => ({ ...prev, [abonoId]: true }));
+      replaceAbonoInState(payload.data as AbonoItem);
       setAbonoMessage(
-        typeof json.warning === "string" && json.warning.trim()
-          ? `Comprobante agregado. ${json.warning}`
+        typeof payload.warning === "string" && payload.warning.trim()
+          ? `Comprobante agregado. ${payload.warning}`
           : "Comprobante agregado correctamente."
       );
     } catch (err) {
@@ -1183,17 +1196,17 @@ export default function OrdenDetallePage() {
 
     try {
       const res = await fetch(
-        `/api/abonos-por-orden/${encodeURIComponent(abonoId)}/comprobantes/${encodeURIComponent(
+        `/api/abonos-por-orden/${encodeURIComponent(abonoId)}/comprobantes?attachmentId=${encodeURIComponent(
           attachment.id
         )}`,
         { method: "DELETE" }
       );
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        throw new Error(json.error || "No se pudo eliminar el comprobante");
+      const payload = await parseApiResponseSafely(res);
+      if (!res.ok || !payload?.success) {
+        throw new Error(payload?.error?.trim() || "No se pudo eliminar el comprobante");
       }
 
-      replaceAbonoInState(json.data as AbonoItem);
+      replaceAbonoInState(payload.data as AbonoItem);
       setAbonoMessage("Comprobante eliminado correctamente.");
       if (comprobanteViewer?.attachment.id === attachment.id) {
         closeComprobanteViewer();
@@ -1658,7 +1671,7 @@ export default function OrdenDetallePage() {
       subtitle="Vista de solo lectura conectada a Airtable"
       active="ordenes"
     >
-      <div className="w-full max-w-5xl space-y-6">
+      <div className="w-full max-w-7xl space-y-6">
         {loading && <div className="text-sm text-zinc-300">Cargando orden...</div>}
 
         {error && (
@@ -1669,7 +1682,9 @@ export default function OrdenDetallePage() {
 
         {!loading && !error && orden && (
           <div className="space-y-6">
-            <section className="rounded-2xl border border-zinc-800 bg-gradient-to-br from-[#141414] via-[#101010] to-[#171717] px-6 py-6 shadow-[0_16px_44px_rgba(0,0,0,0.35)]">
+            <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(360px,0.9fr)]">
+              <div className="min-w-0 space-y-6">
+                <section className="rounded-2xl border border-zinc-800 bg-gradient-to-br from-[#141414] via-[#101010] to-[#171717] px-6 py-6 shadow-[0_16px_44px_rgba(0,0,0,0.35)]">
               <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
                 <div className="space-y-3">
                   <p className="text-3xl font-extrabold text-white leading-tight tracking-tight">
@@ -2017,7 +2032,7 @@ export default function OrdenDetallePage() {
               )}
             </section>
 
-            <div className="grid items-start gap-4 overflow-visible lg:grid-cols-2">
+            <div className="grid items-start gap-4 overflow-visible xl:grid-cols-2">
               <div
                 className={`relative min-w-0 ${
                   showRepuestoResults ? "z-[80]" : "z-10"
@@ -2484,99 +2499,95 @@ export default function OrdenDetallePage() {
                 </section>
               </div>
             </div>
+          </div>
 
-            <section className="rounded-md border border-zinc-800 bg-zinc-900/70 px-4 py-4 shadow-sm space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-[#e3fc02]">Presupuesto y Abonos</h3>
-                  <p className="text-xs text-zinc-400">
-                    Resumen financiero con campos NV y movimientos de abonos de esta orden.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAbonoError(null);
-                    setAbonoMessage(null);
-                    setOpenAbonoModal(true);
-                  }}
-                  className="rounded-md border border-[#e3fc02]/70 bg-[#e3fc02]/10 px-3 py-1.5 text-xs font-semibold text-[#e3fc02] hover:bg-[#e3fc02]/20"
-                >
-                  Registrar abono
-                </button>
+          <aside className="min-w-0 xl:sticky xl:top-6">
+            <section className="rounded-2xl border border-zinc-700/70 bg-gradient-to-br from-zinc-900/95 via-zinc-900/90 to-zinc-950/95 px-5 py-5 shadow-[0_20px_46px_rgba(0,0,0,0.42)] ring-1 ring-zinc-800/60 backdrop-blur-sm sm:px-6 sm:py-6">
+              <div className="space-y-2">
+                <h3 className="text-lg font-extrabold uppercase leading-tight tracking-wide text-zinc-100">
+                  Presupuesto y Abonos
+                </h3>
+                <p className="max-w-[36ch] text-sm leading-6 text-zinc-300">
+                  Resumen financiero con campos NV y movimientos de abonos de esta orden.
+                </p>
               </div>
 
               {abonoMessage && (
-                <p className="text-xs text-emerald-300">{abonoMessage}</p>
+                <div className="mt-6 flex items-center gap-3 rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-4 py-2.5 text-sm text-emerald-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-300 text-zinc-950">
+                    <svg aria-hidden="true" viewBox="0 0 20 20" className="h-3.5 w-3.5 fill-current">
+                      <path d="M8.35 13.2 4.9 9.75l1.06-1.06 2.39 2.39 5.69-5.69 1.06 1.06-6.75 6.75Z" />
+                    </svg>
+                  </span>
+                  <span>{abonoMessage}</span>
+                </div>
               )}
 
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                <div className="rounded-md border border-zinc-800 bg-zinc-950/70 p-3">
-                  <p className="text-[11px] uppercase tracking-wide text-zinc-400">
+              <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 sm:grid-rows-2">
+                <div className="border-b border-zinc-500/35 px-4 py-4 sm:border-r">
+                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-zinc-300">
                     Repuestos (NV)
                   </p>
-                  <p className="mt-1 text-base font-semibold text-white">
+                  <p className="mt-3 text-[1.55rem] font-extrabold leading-none text-zinc-50">
                     {formatCurrency(orden.costoTotalRepuestosNV)}
                   </p>
                 </div>
-                <div className="rounded-md border border-zinc-800 bg-zinc-950/70 p-3">
-                  <p className="text-[11px] uppercase tracking-wide text-zinc-400">
+                <div className="border-b border-zinc-500/35 px-4 py-4 sm:border-r">
+                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-zinc-300">
                     Servicios (NV)
                   </p>
-                  <p className="mt-1 text-base font-semibold text-white">
+                  <p className="mt-3 text-[1.55rem] font-extrabold leading-none text-zinc-400">
                     {formatCurrency(orden.costoTotalServiciosNV)}
                   </p>
                 </div>
-                <div className="rounded-md border border-[#e3fc02]/40 bg-[#e3fc02]/5 p-3">
-                  <p className="text-[11px] uppercase tracking-wide text-zinc-300">
-                    Total a pagar (NV)
-                  </p>
-                  <p className="mt-1 text-lg font-extrabold text-[#e3fc02]">
-                    {formatCurrency(orden.totalAPagarNV)}
-                  </p>
-                </div>
-                <div className="rounded-md border border-zinc-800 bg-zinc-950/70 p-3">
-                  <p className="text-[11px] uppercase tracking-wide text-zinc-400">
-                    Total abonado (NV)
-                  </p>
-                  <p className="mt-1 text-base font-semibold text-white">
-                    {formatCurrency(orden.totalAbonadoNV)}
-                  </p>
-                </div>
-                <div
-                  className={`rounded-md p-3 ${
-                    (orden.saldoNV ?? 0) > 0
-                      ? "border border-amber-500/40 bg-amber-500/10"
-                      : "border border-emerald-500/40 bg-emerald-500/10"
-                  }`}
-                >
-                  <p className="text-[11px] uppercase tracking-wide text-zinc-300">
+                <div className="border-b border-zinc-500/35 px-4 py-4 sm:border-b-0">
+                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-zinc-300">
                     Saldo (NV)
                   </p>
-                  <p
-                    className={`mt-1 text-lg font-extrabold ${
-                      (orden.saldoNV ?? 0) > 0 ? "text-amber-300" : "text-emerald-300"
-                    }`}
-                  >
+                  <p className="mt-3 text-[1.55rem] font-extrabold leading-none text-amber-300">
                     {formatCurrency(orden.saldoNV)}
                   </p>
                 </div>
+                <div className="border-b border-zinc-500/35 px-4 py-4 sm:border-r sm:border-b-0">
+                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-zinc-300">
+                    Total a pagar (NV)
+                  </p>
+                  <p className="mt-3 text-[1.55rem] font-extrabold leading-none text-[#e3fc02]">
+                    {formatCurrency(orden.totalAPagarNV)}
+                  </p>
+                </div>
+                <div className="border-b border-zinc-500/35 px-4 py-4 sm:border-r sm:border-b-0">
+                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-zinc-300">
+                    Total abonado (NV)
+                  </p>
+                  <p className="mt-3 text-[1.55rem] font-extrabold leading-none text-zinc-400">
+                    {formatCurrency(orden.totalAbonadoNV)}
+                  </p>
+                </div>
+                <div className="hidden sm:block" aria-hidden="true" />
               </div>
 
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-                    Abonos registrados
-                  </h4>
-                  <span className="text-xs text-zinc-500">
-                    {(orden.abonosPorOrden ?? []).length} movimientos
-                  </span>
-                </div>
+              <div className="mt-7 space-y-3">
+                <h4 className="text-sm font-extrabold uppercase leading-tight tracking-wide text-zinc-200">
+                  ABONOS REGISTRADOS ({(orden.abonosPorOrden ?? []).length} MOVIMIENTOS)
+                </h4>
 
                 {(orden.abonosPorOrden ?? []).length === 0 ? (
-                  <p className="rounded-md border border-zinc-800 bg-zinc-950/60 px-3 py-3 text-sm text-zinc-400">
-                    Aun no hay abonos registrados para esta orden.
-                  </p>
+                  <div className="rounded-xl border border-dashed border-zinc-500/70 px-5 py-7 text-center">
+                    <div className="mx-auto mb-5 inline-flex h-11 w-11 items-center justify-center rounded-full border border-zinc-700 bg-zinc-950/45 text-zinc-400">
+                      <svg aria-hidden="true" viewBox="0 0 24 24" className="h-6 w-6" fill="none">
+                        <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="1.8" />
+                        <path d="M12 8v4l2 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                        <path d="M6 6l12 12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                      </svg>
+                    </div>
+                    <p className="text-[0.95rem] font-semibold leading-6 text-zinc-100">
+                      Aún no hay abonos registrados para esta orden.
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-zinc-400">
+                      Registra un abono para empezar a controlar el saldo.
+                    </p>
+                  </div>
                 ) : (
                   <div className="space-y-2">
                     {(orden.abonosPorOrden ?? []).map((abono) => {
@@ -2598,7 +2609,6 @@ export default function OrdenDetallePage() {
                             ]
                           : [];
                       const hasAttachments = attachments.length > 0;
-                      const isAdjuntosOpen = Boolean(abonoAdjuntosOpen[abono.id]);
                       const isAdjuntoUploading = abonoAdjuntoUploadingId === abono.id;
                       const attachmentError = abonoAdjuntoError[abono.id];
                       return (
@@ -2606,14 +2616,14 @@ export default function OrdenDetallePage() {
                           key={abono.id}
                           className="rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-3"
                         >
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div className="space-y-1">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 space-y-1.5">
                               <p className="text-sm font-semibold text-white">
                                 {abono.idAbono ? `Abono ${abono.idAbono}` : "Abono registrado"}
                               </p>
                               <p className="text-xs text-zinc-400">Fecha: {formatDate(abono.fecha)}</p>
                               <p className="text-xs text-zinc-400">
-                                Método de pago: {abono.metodoPago || "No disponible"}
+                                Metodo de pago: {abono.metodoPago || "No disponible"}
                               </p>
                               {abono.registradoPor && (
                                 <p className="text-xs text-zinc-500">
@@ -2626,157 +2636,99 @@ export default function OrdenDetallePage() {
                                 </p>
                               )}
                             </div>
-                            <div className="flex items-center gap-2">
-                              <p className="text-base font-extrabold text-white">
-                                {formatCurrency(abono.monto)}
-                              </p>
-                              {hasAttachments && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setAbonoAdjuntosOpen((prev) => ({
-                                      ...prev,
-                                      [abono.id]: !prev[abono.id],
-                                    }))
-                                  }
-                                  className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-[11px] font-semibold text-zinc-200 hover:text-white hover:border-zinc-700 transition focus:outline-none focus:ring-1 focus:ring-[#e3fc02]"
-                                  title={isAdjuntosOpen ? "Ocultar comprobantes" : "Ver comprobantes"}
-                                  aria-label={isAdjuntosOpen ? "Ocultar comprobantes" : "Ver comprobantes"}
-                                >
-                                  <PaperclipIcon className="h-3.5 w-3.5" />
-                                  {isAdjuntosOpen ? "Ocultar" : "Ver comprobantes"}
-                                </button>
-                              )}
-                              <label
-                                className={`inline-flex cursor-pointer items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:text-white hover:border-zinc-700 focus-within:outline-none focus-within:ring-1 focus-within:ring-[#e3fc02] ${
-                                  isAdjuntoUploading ? "opacity-60 pointer-events-none" : ""
-                                }`}
-                              >
-                                <PaperclipIcon className="h-3.5 w-3.5" />
-                                {isAdjuntoUploading ? "Subiendo..." : "Agregar comprobante"}
-                                <input
-                                  type="file"
-                                  className="sr-only"
-                                  accept="image/*,.pdf"
-                                  disabled={isAdjuntoUploading}
-                                  onChange={(event) => {
-                                    const selectedFile = event.target.files?.[0] ?? null;
-                                    void handleAgregarComprobanteAbono(abono.id, selectedFile);
-                                    event.target.value = "";
-                                  }}
-                                />
-                              </label>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAbonoDeleteError(null);
-                                  setAbonoDeleteConfirmId((prev) => (prev === abono.id ? null : abono.id));
-                                }}
-                                className={lineDeleteActionButtonClass}
-                                title="Eliminar abono"
-                                aria-label="Eliminar abono"
-                                disabled={isDeleting}
-                              >
-                                {isDeleting ? (
-                                  <span className="h-3 w-3 animate-spin rounded-full border border-red-400/70 border-t-transparent" />
-                                ) : (
-                                  <TrashIcon className="h-4 w-4" />
-                                )}
-                              </button>
-                            </div>
+                            <p className="shrink-0 text-lg font-extrabold text-white">
+                              {formatCurrency(abono.monto)}
+                            </p>
                           </div>
+
+                          {hasAttachments && (
+                            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                              {attachments.map((attachment, idx) => {
+                                const isImage = isImageAttachment(attachment);
+                                const isPdf = isPdfAttachment(attachment);
+                                const filename = attachment.filename || `Comprobante ${idx + 1}`;
+                                return (
+                                  <button
+                                    key={attachment.id ?? `${abono.id}-${idx}`}
+                                    type="button"
+                                    onClick={() => openComprobanteViewer(abono.id, attachment)}
+                                    className="group relative h-10 w-10 shrink-0 overflow-hidden rounded-md border border-zinc-800 bg-zinc-900 transition hover:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-[#e3fc02]"
+                                    title={filename}
+                                    aria-label={`Abrir comprobante ${idx + 1}`}
+                                  >
+                                    {isImage ? (
+                                      <Image
+                                        src={attachment.thumbnailUrl || attachment.url}
+                                        alt={filename}
+                                        width={40}
+                                        height={40}
+                                        unoptimized
+                                        className="h-full w-full object-cover"
+                                      />
+                                    ) : (
+                                      <div className="flex h-full w-full flex-col items-center justify-center gap-0.5">
+                                        <FileIcon className="h-3 w-3 text-zinc-300" />
+                                        <span
+                                          className={`rounded px-1 py-0.5 text-[9px] font-bold tracking-wide ${
+                                            isPdf
+                                              ? "bg-red-500/20 text-red-300"
+                                              : "bg-zinc-700/80 text-zinc-200"
+                                          }`}
+                                        >
+                                          {isPdf ? "PDF" : "FILE"}
+                                        </span>
+                                      </div>
+                                    )}
+                                    <span className="pointer-events-none absolute inset-0 hidden items-center justify-center bg-black/35 text-zinc-100 sm:flex sm:opacity-0 sm:transition sm:group-hover:opacity-100 sm:group-focus-visible:opacity-100">
+                                      <EyeIcon className="h-3.5 w-3.5" />
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <label
+                              className={`inline-flex cursor-pointer items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:text-white hover:border-zinc-700 focus-within:outline-none focus-within:ring-1 focus-within:ring-[#e3fc02] ${
+                                isAdjuntoUploading ? "opacity-60 pointer-events-none" : ""
+                              }`}
+                            >
+                              <PaperclipIcon className="h-3.5 w-3.5" />
+                              {isAdjuntoUploading ? "Subiendo..." : "Agregar comprobante"}
+                              <input
+                                type="file"
+                                className="sr-only"
+                                accept="image/*,.pdf"
+                                disabled={isAdjuntoUploading}
+                                onChange={(event) => {
+                                  const selectedFile = event.target.files?.[0] ?? null;
+                                  void handleAgregarComprobanteAbono(abono.id, selectedFile);
+                                  event.target.value = "";
+                                }}
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAbonoDeleteError(null);
+                                setAbonoDeleteConfirmId((prev) => (prev === abono.id ? null : abono.id));
+                              }}
+                              className={lineDeleteActionButtonClass}
+                              title="Eliminar abono"
+                              aria-label="Eliminar abono"
+                              disabled={isDeleting}
+                            >
+                              {isDeleting ? (
+                                <span className="h-3 w-3 animate-spin rounded-full border border-red-400/70 border-t-transparent" />
+                              ) : (
+                                <TrashIcon className="h-4 w-4" />
+                              )}
+                            </button>
+                          </div>
+
                           {attachmentError && (
                             <p className="mt-2 text-xs text-red-400">{attachmentError}</p>
-                          )}
-                          {hasAttachments && isAdjuntosOpen && (
-                            <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-900/60 p-3 space-y-2">
-                              <p className="text-[11px] uppercase tracking-wide text-zinc-400">
-                                Comprobantes ({attachments.length})
-                              </p>
-                              <div className="grid gap-2 sm:grid-cols-2">
-                                {attachments.map((attachment, idx) => {
-                                  const isImage = isImageAttachment(attachment);
-                                  const isPdf = isPdfAttachment(attachment);
-                                  const filename =
-                                    attachment.filename || `Comprobante ${idx + 1}`;
-                                  const deletingAttachmentKey =
-                                    attachment.id ? `${abono.id}:${attachment.id}` : null;
-                                  const isDeletingAttachment =
-                                    deletingAttachmentKey !== null &&
-                                    abonoAdjuntoDeletingKey === deletingAttachmentKey;
-                                  return (
-                                    <div
-                                      key={attachment.id ?? `${abono.id}-${idx}`}
-                                      className="group relative overflow-hidden rounded-md border border-zinc-800 bg-zinc-950 hover:border-zinc-700 transition"
-                                    >
-                                      <button
-                                        type="button"
-                                        onClick={() => openComprobanteViewer(abono.id, attachment)}
-                                        className="w-full text-left"
-                                        title={isPdf ? "Ver PDF" : "Ver archivo"}
-                                      >
-                                        {isImage ? (
-                                          <>
-                                            <Image
-                                              src={attachment.thumbnailUrl || attachment.url}
-                                              alt={filename}
-                                              width={320}
-                                              height={160}
-                                              unoptimized
-                                              className="h-28 w-full object-cover"
-                                            />
-                                            <div className="px-2 py-1.5 text-[11px] text-zinc-300 group-hover:text-white truncate">
-                                              {filename}
-                                            </div>
-                                          </>
-                                        ) : (
-                                          <div className="px-3 py-2">
-                                            <div className="flex items-center gap-2 min-w-0">
-                                              <FileIcon className="h-4 w-4 text-zinc-400 shrink-0" />
-                                              <p className="text-[11px] font-semibold text-zinc-300">
-                                                {isPdf ? "PDF" : "Archivo"}
-                                              </p>
-                                            </div>
-                                            <p className="mt-1 text-xs text-zinc-400 truncate" title={filename}>
-                                              {filename}
-                                            </p>
-                                          </div>
-                                        )}
-                                      </button>
-
-                                      <div className="absolute right-2 top-2 flex items-center gap-1 rounded-md border border-zinc-700/80 bg-black/70 px-1 py-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
-                                        <button
-                                          type="button"
-                                          onClick={() => openComprobanteViewer(abono.id, attachment)}
-                                          className="rounded px-1.5 py-1 text-[10px] font-semibold text-zinc-200 hover:bg-zinc-700/70 hover:text-white"
-                                        >
-                                          Ver
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            void downloadAttachment(attachment);
-                                          }}
-                                          className="rounded px-1.5 py-1 text-[10px] font-semibold text-zinc-200 hover:bg-zinc-700/70 hover:text-white"
-                                        >
-                                          Descargar
-                                        </button>
-                                        {attachment.id && (
-                                          <button
-                                            type="button"
-                                            onClick={() => handleEliminarComprobanteAbono(abono.id, attachment)}
-                                            disabled={Boolean(isDeletingAttachment)}
-                                            className="rounded px-1.5 py-1 text-[10px] font-semibold text-red-300 hover:bg-red-500/20 hover:text-red-100 disabled:opacity-60"
-                                          >
-                                            {isDeletingAttachment ? "..." : "Eliminar"}
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
                           )}
                           {isConfirming && (
                             <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950/80 px-3 py-2 text-[12px] text-zinc-200">
@@ -2806,7 +2758,23 @@ export default function OrdenDetallePage() {
                   </div>
                 )}
               </div>
+
+              <div className="flex justify-center pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAbonoError(null);
+                    setAbonoMessage(null);
+                    setOpenAbonoModal(true);
+                  }}
+                  className="inline-flex h-11 items-center justify-center rounded-lg bg-[#e3fc02] px-7 text-[0.95rem] font-extrabold uppercase tracking-wide text-black shadow-[0_12px_24px_rgba(227,252,2,0.23)] transition hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-[#e3fc02]/70 focus:ring-offset-2 focus:ring-offset-zinc-950"
+                >
+                  Registrar abono
+                </button>
+              </div>
             </section>
+          </aside>
+        </div>
 
             {viewerAttachment && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm px-4">
