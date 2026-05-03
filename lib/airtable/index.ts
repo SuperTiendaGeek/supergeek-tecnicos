@@ -31,6 +31,99 @@ export interface OrdenListado {
   ingresaPor: string;
   estadoActual: EstadoOrden | string;
   fechaIngreso: string;
+  ultimaModificacion: string;
+}
+
+export interface OrdenesPageResult {
+  records: OrdenListado[];
+  nextOffset: string | null;
+  pageSize: number;
+  hasNext: boolean;
+  riskSummary: OrdenesRiskSummary;
+  statusCounts: OrdenesStatusCounts;
+}
+
+export interface ClienteBusqueda {
+  id: string;
+  nombre: string;
+  cedula: string;
+  telefono: string;
+  correo: string;
+  direccion: string;
+  notas?: string | null;
+}
+
+export interface ClienteListado extends ClienteBusqueda {
+  numeroOrdenes: number | null;
+  ultimaFechaIngreso: string;
+}
+
+export interface ClienteDetalle extends ClienteListado {
+  notas: string | null;
+  ordenesRelacionadas: string[];
+}
+
+export interface OrdenClienteListado {
+  recordId: string;
+  idVisible: string;
+  equipo: string;
+  fechaIngreso: string;
+  estadoActual: EstadoOrden | string;
+}
+
+export interface ClientesPageResult {
+  records: ClienteListado[];
+  nextOffset: string | null;
+  pageSize: number;
+  hasNext: boolean;
+}
+
+export interface NuevoClienteInput {
+  nombre: string;
+  cedula?: string | null;
+  telefono?: string | null;
+  correo?: string | null;
+  direccion?: string | null;
+  notas?: string | null;
+}
+
+export interface NuevaOrdenInput {
+  clienteId?: string | null;
+  nuevoCliente?: NuevoClienteInput | null;
+  orden: {
+    equipo: string;
+    accesorios?: string | null;
+    ingresaPor: string;
+  };
+}
+
+export interface OrdenCreadaResult {
+  ok: true;
+  ordenId: string;
+  airtableRecordId: string;
+}
+
+export interface FetchOrdenesPageOptions {
+  pageSize?: number;
+  offset?: string | null;
+  q?: string | null;
+  estado?: string | null;
+  risk?: OrdenesRiskFilter | null;
+}
+
+export type OrdenesRiskFilter = "warning" | "critical";
+
+export interface OrdenesRiskSummary {
+  warningCount: number;
+  criticalCount: number;
+}
+
+export type OrdenesStatusCounts = Record<EstadoOrden, number>;
+
+export interface FetchClientesPageOptions {
+  pageSize?: number;
+  offset?: string | null;
+  q?: string | null;
 }
 
 // Detalle
@@ -39,9 +132,11 @@ export interface OrdenDetalle {
   idVisible: string;
   estadoActual: EstadoOrden | string;
   fechaIngreso: string;
+  ultimaModificacion: string;
   ingresaPor: string;
   tipoOrden: TipoOrden | string;
   clienteNombre: string;
+  cedula: string;
   telefono: string;
   equipo: string;
   accesorios: string;
@@ -277,6 +372,144 @@ const clampAirtablePageSize = (value: number): number => {
   return Math.max(1, Math.min(AIRTABLE_MAX_PAGE_SIZE, Math.floor(value)));
 };
 
+const escapeAirtableFormulaString = (value: string): string =>
+  value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+const escapeRegexLiteral = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildTextSearchFormula = (query: string, fields: string[]): string | null => {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return null;
+  const escaped = escapeAirtableFormulaString(escapeRegexLiteral(normalized));
+  return `OR(${fields
+    .map((field) => `REGEX_MATCH(LOWER({${field}} & ""), "${escaped}")`)
+    .join(",")})`;
+};
+
+const buildOrdenesFilterFormula = ({
+  q,
+  estado,
+  risk,
+}: {
+  q?: string | null;
+  estado?: string | null;
+  risk?: OrdenesRiskFilter | null;
+}): string | null => {
+  const clauses: string[] = [];
+  const searchFormula = buildTextSearchFormula(q ?? "", [
+    "ID",
+    "ClienteTXT",
+    "Cliente",
+    "Equipo",
+    "Ingresa Por",
+    "Telefono",
+  ]);
+  if (searchFormula) clauses.push(searchFormula);
+
+  const normalizedEstado = (estado ?? "").trim();
+  if (normalizedEstado && normalizedEstado.toLowerCase() !== "todos") {
+    clauses.push(
+      `LOWER({Estado Actual} & "") = "${escapeAirtableFormulaString(
+        normalizedEstado.toLowerCase()
+      )}"`
+    );
+  }
+
+  const riskFormula = buildOrdenesRiskFormula(risk ?? null);
+  if (riskFormula) clauses.push(riskFormula);
+
+  if (clauses.length === 0) return null;
+  if (clauses.length === 1) return clauses[0];
+  return `AND(${clauses.join(",")})`;
+};
+
+const buildOrdenesRiskFormula = (risk?: OrdenesRiskFilter | null): string | null => {
+  if (!risk) return null;
+
+  const referenceDate = `IF({Ultima Modificacion}, {Ultima Modificacion}, {Fecha de Ingreso})`;
+  const daysWaiting = `IF(OR({Ultima Modificacion}, {Fecha de Ingreso}), DATETIME_DIFF(TODAY(), ${referenceDate}, 'days'), -1)`;
+  const base = [
+    `LOWER({Estado Actual} & "") = "esperando respuesta"`,
+    `OR({Ultima Modificacion}, {Fecha de Ingreso})`,
+  ];
+
+  if (risk === "warning") {
+    return `AND(${[...base, `${daysWaiting} >= 60`, `${daysWaiting} < 90`].join(",")})`;
+  }
+
+  return `AND(${[...base, `${daysWaiting} >= 90`].join(",")})`;
+};
+
+const isUnknownAirtableFieldError = (message: string): boolean =>
+  message.includes("UNKNOWN_FIELD_NAME") || message.includes("Unknown field name");
+
+const mapClienteRecord = (record: {
+  id: string;
+  fields?: Record<string, unknown>;
+}): ClienteBusqueda => {
+  const f = record.fields ?? {};
+  return {
+    id: record.id,
+    nombre: pickStringField(f, ["Nombre"], "Cliente sin nombre"),
+    cedula: pickStringField(f, ["C\u00e9dula", "Cedula"], ""),
+    telefono: pickStringField(f, ["Tel\u00e9fono", "Telefono"], ""),
+    correo: pickStringField(f, ["Correo"], ""),
+    direccion: pickStringField(f, ["Direcci\u00f3n", "Direccion"], ""),
+    notas: pickOptionalStringField(f, ["Notas"]),
+  };
+};
+
+const mapClienteListadoRecord = (record: {
+  id: string;
+  fields?: Record<string, unknown>;
+}): ClienteListado => {
+  const f = record.fields ?? {};
+  return {
+    ...mapClienteRecord(record),
+    numeroOrdenes: pickNumberField(f, [
+      "N\u00famero de \u00d3rdenes",
+      "Numero de Ordenes",
+      "N\u00famero de Ordenes",
+      "Numero de \u00d3rdenes",
+    ]),
+    ultimaFechaIngreso:
+      pickOptionalStringField(f, [
+        "\u00daltima Fecha de Ingreso",
+        "Ultima Fecha de Ingreso",
+      ]) ?? "",
+  };
+};
+
+const mapClienteDetalleRecord = (record: {
+  id: string;
+  fields?: Record<string, unknown>;
+}): ClienteDetalle => {
+  const f = record.fields ?? {};
+  return {
+    ...mapClienteListadoRecord(record),
+    notas: pickOptionalStringField(f, ["Notas"]),
+    ordenesRelacionadas: toLinkedRecordIds(f["\u00d3rdenes Relacionadas"]),
+  };
+};
+
+const mapOrdenClienteRecord = (record: {
+  id: string;
+  fields?: Record<string, unknown>;
+}): OrdenClienteListado => {
+  const f = record.fields ?? {};
+  return {
+    recordId: record.id,
+    idVisible: safeString(f["ID"], record.id),
+    equipo: safeString(f["Equipo"], "Sin equipo"),
+    fechaIngreso: safeString(f["Fecha de Ingreso"], ""),
+    estadoActual: firstString(f["Estado Actual"], "Sin estado"),
+  };
+};
+
+const buildClientesSearchFormula = (query: string, fields: string[]): string | null =>
+  buildTextSearchFormula(query, fields);
+
 const toLinkedRecordIds = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");
@@ -344,22 +577,200 @@ const fetchAllTableRecords = async ({
   return normalizedLimit === null ? records : records.slice(0, normalizedLimit);
 };
 
+const mapOrdenListadoRecord = (record: {
+  id: string;
+  fields?: Record<string, unknown>;
+}): OrdenListado => {
+  const f = record.fields ?? {};
+  let clienteNombre = firstString(f["ClienteTXT"], "");
+  if (clienteNombre.startsWith("rec")) clienteNombre = "";
+  if (!clienteNombre) {
+    const cli = firstString(f["Cliente"], "");
+    clienteNombre = cli && !cli.startsWith("rec") ? cli : "";
+  }
+  if (!clienteNombre) clienteNombre = "Cliente no disponible";
+  const ingresaPor = safeString(f["Ingresa Por"], "No disponible");
+
+  return {
+    recordId: record.id,
+    idVisible: safeString(f["ID"], record.id),
+    clienteNombre,
+    telefono: safeString(f["Telefono"], "-"),
+    equipo: safeString(f["Equipo"], "Sin equipo"),
+    ingresaPor,
+    estadoActual: firstString(f["Estado Actual"], "Sin estado"),
+    fechaIngreso: safeString(f["Fecha de Ingreso"], ""),
+    ultimaModificacion: pickStringField(
+      f,
+      ["Ultima Modificacion", "\u00daltima Modificacion", "\u00daltima Modificaci\u00f3n"],
+      ""
+    ),
+  };
+};
+
+const countOrdenesByFormula = async ({
+  q,
+  estado,
+  risk,
+  client,
+}: {
+  q?: string | null;
+  estado?: string | null;
+  risk: OrdenesRiskFilter;
+  client: AirtableClient;
+}): Promise<number> => {
+  let count = 0;
+  let offset: string | undefined;
+  const filterFormula = buildOrdenesFilterFormula({ q, estado, risk });
+
+  do {
+    const url = new URL(`${client.baseUrl}/${encodeURIComponent(AIRTABLE_TABLES.ordenes)}`);
+    url.searchParams.set("pageSize", "100");
+    url.searchParams.append("fields[]", "ID");
+    if (filterFormula) {
+      url.searchParams.append("filterByFormula", filterFormula);
+    }
+    if (offset) {
+      url.searchParams.set("offset", offset);
+    }
+
+    const res = await fetch(url.toString(), {
+      headers: client.headers,
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Airtable error ${res.status}: ${text}`);
+    }
+
+    const data = (await res.json()) as {
+      records?: AirtableGenericRecord[];
+      offset?: string;
+    };
+    count += data.records?.length ?? 0;
+    offset = data.offset;
+  } while (offset);
+
+  return count;
+};
+
+const fetchOrdenesRiskSummary = async ({
+  q,
+  estado,
+  client,
+}: {
+  q?: string | null;
+  estado?: string | null;
+  client: AirtableClient;
+}): Promise<OrdenesRiskSummary> => {
+  const [warningCount, criticalCount] = await Promise.all([
+    countOrdenesByFormula({ q, estado, risk: "warning", client }),
+    countOrdenesByFormula({ q, estado, risk: "critical", client }),
+  ]);
+
+  return { warningCount, criticalCount };
+};
+
+const createEmptyOrdenesStatusCounts = (): OrdenesStatusCounts =>
+  ESTADOS_ORDEN.reduce(
+    (acc, estado) => {
+      acc[estado] = 0;
+      return acc;
+    },
+    {} as OrdenesStatusCounts
+  );
+
+const normalizeOrdenStatus = (value: unknown): EstadoOrden | null => {
+  const raw = firstString(value, "").trim().toLowerCase();
+  if (!raw) return null;
+
+  return (
+    ESTADOS_ORDEN.find((estado) => estado.toLowerCase() === raw) ?? null
+  );
+};
+
+const fetchOrdenesStatusCounts = async ({
+  q,
+  risk,
+  client,
+}: {
+  q?: string | null;
+  risk?: OrdenesRiskFilter | null;
+  client: AirtableClient;
+}): Promise<OrdenesStatusCounts> => {
+  const counts = createEmptyOrdenesStatusCounts();
+  const filterFormula = buildOrdenesFilterFormula({ q, estado: null, risk });
+  let offset: string | undefined;
+
+  do {
+    const url = new URL(`${client.baseUrl}/${encodeURIComponent(AIRTABLE_TABLES.ordenes)}`);
+    url.searchParams.set("pageSize", "100");
+    url.searchParams.append("fields[]", "Estado Actual");
+    if (filterFormula) {
+      url.searchParams.append("filterByFormula", filterFormula);
+    }
+    if (offset) {
+      url.searchParams.set("offset", offset);
+    }
+
+    const res = await fetch(url.toString(), {
+      headers: client.headers,
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Airtable error ${res.status}: ${text}`);
+    }
+
+    const data = (await res.json()) as {
+      records?: AirtableGenericRecord[];
+      offset?: string;
+    };
+
+    for (const record of data.records ?? []) {
+      const status = normalizeOrdenStatus(record.fields?.["Estado Actual"]);
+      if (status) counts[status] += 1;
+    }
+
+    offset = data.offset;
+  } while (offset);
+
+  return counts;
+};
+
 // --- Listado de Ã³rdenes ---
-export const fetchOrdenes = async (limit = 30): Promise<OrdenListado[]> => {
+export const fetchOrdenesPage = async ({
+  pageSize = 30,
+  offset,
+  q,
+  estado,
+  risk,
+}: FetchOrdenesPageOptions = {}): Promise<OrdenesPageResult> => {
   const client = getClient();
+  const normalizedPageSize = clampAirtablePageSize(pageSize);
   const url = new URL(
     `${client.baseUrl}/${encodeURIComponent(AIRTABLE_TABLES.ordenes)}`
   );
 
-  url.searchParams.set("pageSize", String(clampAirtablePageSize(limit)));
+  url.searchParams.set("pageSize", String(normalizedPageSize));
+  if (offset) {
+    url.searchParams.set("offset", offset);
+  }
   url.searchParams.append("sort[0][field]", "Fecha de Ingreso");
   url.searchParams.append("sort[0][direction]", "desc");
+  const filterFormula = buildOrdenesFilterFormula({ q, estado, risk });
+  if (filterFormula) {
+    url.searchParams.append("filterByFormula", filterFormula);
+  }
   [
     "ID",
     "ClienteTXT",
     "Cliente",
     "Telefono",
     "Fecha de Ingreso",
+    "Ultima Modificacion",
     "Equipo",
     "Ingresa Por",
     "Estado Actual",
@@ -378,41 +789,455 @@ export const fetchOrdenes = async (limit = 30): Promise<OrdenListado[]> => {
   }
 
   type AirtableRow = { id: string; fields: Record<string, unknown> };
-  const data = (await res.json()) as { records?: AirtableRow[] };
+  const data = (await res.json()) as { records?: AirtableRow[]; offset?: string };
   const records = data.records ?? [];
 
-  // Logs de depuraciÃ³n temporales (eliminar despuÃ©s de validar)
-  console.log(
-    "fetchOrdenes payload sample",
-    records.slice(0, 2).map((r) => ({
-      ClienteTXT: r.fields?.["ClienteTXT"],
-      Cliente: r.fields?.["Cliente"],
-      IngresaPor: r.fields?.["Ingresa Por"],
-    }))
+  const [riskSummary, statusCounts] = await Promise.all([
+    fetchOrdenesRiskSummary({ q, estado, client }),
+    fetchOrdenesStatusCounts({ q, risk, client }),
+  ]);
+
+  return {
+    records: records.map(mapOrdenListadoRecord),
+    nextOffset: data.offset ?? null,
+    pageSize: normalizedPageSize,
+    hasNext: Boolean(data.offset),
+    riskSummary,
+    statusCounts,
+  };
+};
+
+export const fetchOrdenes = async (limit = 30): Promise<OrdenListado[]> => {
+  const result = await fetchOrdenesPage({ pageSize: limit });
+  return result.records;
+};
+
+export const fetchClientesPage = async ({
+  pageSize = 30,
+  offset,
+  q,
+}: FetchClientesPageOptions = {}): Promise<ClientesPageResult> => {
+  const client = getClient();
+  const normalizedPageSize = clampAirtablePageSize(pageSize);
+  const query = (q ?? "").trim();
+  const fieldSets = [
+    [
+      "Nombre",
+      "C\u00e9dula",
+      "Tel\u00e9fono",
+      "Correo",
+      "Direcci\u00f3n",
+      "N\u00famero de \u00d3rdenes",
+      "\u00daltima Fecha de Ingreso",
+    ],
+    [
+      "Nombre",
+      "Cedula",
+      "Telefono",
+      "Correo",
+      "Direccion",
+      "Numero de Ordenes",
+      "Ultima Fecha de Ingreso",
+    ],
+  ];
+  let lastError: Error | null = null;
+
+  for (const fields of fieldSets) {
+    const url = new URL(`${client.baseUrl}/${encodeURIComponent(AIRTABLE_TABLES.clientes)}`);
+    url.searchParams.set("pageSize", String(normalizedPageSize));
+    if (offset) {
+      url.searchParams.set("offset", offset);
+    }
+    url.searchParams.append("sort[0][field]", "Nombre");
+    url.searchParams.append("sort[0][direction]", "asc");
+
+    const formula = buildClientesSearchFormula(query, fields.slice(0, 4));
+    if (formula) {
+      url.searchParams.append("filterByFormula", formula);
+    }
+    fields.forEach((field) => url.searchParams.append("fields[]", field));
+
+    const res = await fetch(url.toString(), {
+      headers: client.headers,
+      cache: "no-store",
+    });
+
+    if (res.ok) {
+      const data = (await res.json()) as {
+        records?: AirtableGenericRecord[];
+        offset?: string;
+      };
+      return {
+        records: (data.records ?? []).map(mapClienteListadoRecord),
+        nextOffset: data.offset ?? null,
+        pageSize: normalizedPageSize,
+        hasNext: Boolean(data.offset),
+      };
+    }
+
+    const text = await res.text();
+    const error = new Error(`Airtable error ${res.status}: ${text}`);
+    lastError = error;
+    if (!isUnknownAirtableFieldError(error.message)) {
+      throw error;
+    }
+  }
+
+  throw lastError ?? new Error("No se pudieron cargar los clientes");
+};
+
+export const buscarClientes = async ({
+  q,
+  pageSize = 8,
+}: {
+  q: string;
+  pageSize?: number;
+}): Promise<ClienteBusqueda[]> => {
+  const client = getClient();
+  const query = q.trim();
+  if (query.length < 2) return [];
+
+  const fieldSets = [
+    ["Nombre", "C\u00e9dula", "Tel\u00e9fono"],
+    ["Nombre", "Cedula", "Telefono"],
+  ];
+  let lastError: Error | null = null;
+
+  for (const fields of fieldSets) {
+    const url = new URL(`${client.baseUrl}/${encodeURIComponent(AIRTABLE_TABLES.clientes)}`);
+    url.searchParams.set("pageSize", String(clampAirtablePageSize(pageSize)));
+    const formula = buildClientesSearchFormula(query, fields);
+    if (formula) {
+      url.searchParams.append("filterByFormula", formula);
+    }
+
+    const res = await fetch(url.toString(), {
+      headers: client.headers,
+      cache: "no-store",
+    });
+
+    if (res.ok) {
+      const data = (await res.json()) as { records?: AirtableGenericRecord[] };
+      return (data.records ?? []).map(mapClienteRecord);
+    }
+
+    const text = await res.text();
+    const error = new Error(`Airtable error ${res.status}: ${text}`);
+    lastError = error;
+    if (!isUnknownAirtableFieldError(error.message)) {
+      throw error;
+    }
+  }
+
+  throw lastError ?? new Error("No se pudieron buscar clientes");
+};
+
+export const createCliente = async (input: NuevoClienteInput): Promise<ClienteBusqueda> => {
+  const nombre = input.nombre.trim();
+  if (!nombre) {
+    throw new Error("El nombre del cliente es obligatorio");
+  }
+
+  const fieldVariants: Record<string, unknown>[] = [
+    {
+      Nombre: nombre,
+      "C\u00e9dula": input.cedula?.trim() || undefined,
+      "Tel\u00e9fono": input.telefono?.trim() || undefined,
+      Correo: input.correo?.trim() || undefined,
+      "Direcci\u00f3n": input.direccion?.trim() || undefined,
+      Notas: input.notas?.trim() || undefined,
+    },
+    {
+      Nombre: nombre,
+      Cedula: input.cedula?.trim() || undefined,
+      Telefono: input.telefono?.trim() || undefined,
+      Correo: input.correo?.trim() || undefined,
+      Direccion: input.direccion?.trim() || undefined,
+      Notas: input.notas?.trim() || undefined,
+    },
+  ].map((fields) =>
+    Object.fromEntries(
+      Object.entries(fields).filter(([, value]) => value !== undefined && value !== "")
+    )
   );
 
-  return records.map((record) => {
-    const f = record.fields ?? {};
-    let clienteNombre = firstString(f["ClienteTXT"], "");
-    if (clienteNombre.startsWith("rec")) clienteNombre = "";
-    if (!clienteNombre) {
-      const cli = firstString(f["Cliente"], "");
-      clienteNombre = cli && !cli.startsWith("rec") ? cli : "";
+  let lastError: Error | null = null;
+  for (const fields of fieldVariants) {
+    try {
+      const created = await createRecord(AIRTABLE_TABLES.clientes, fields);
+      return mapClienteRecord(created);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error("Error inesperado");
+      lastError = err;
+      if (!isUnknownAirtableFieldError(err.message)) {
+        throw err;
+      }
     }
-    if (!clienteNombre) clienteNombre = "Cliente no disponible";
-    const ingresaPor = safeString(f["Ingresa Por"], "No disponible");
+  }
 
-    return {
-      recordId: record.id,
-      idVisible: safeString(f["ID"], record.id),
-      clienteNombre,
-      telefono: safeString(f["Telefono"], "-"),
-      equipo: safeString(f["Equipo"], "Sin equipo"),
-      ingresaPor,
-      estadoActual: firstString(f["Estado Actual"], "Sin estado"),
-      fechaIngreso: safeString(f["Fecha de Ingreso"], ""),
-    };
+  throw lastError ?? new Error("No se pudo crear el cliente");
+};
+
+export const fetchClienteById = async (recordId: string): Promise<ClienteDetalle | null> => {
+  const id = recordId.trim();
+  if (!id) return null;
+
+  try {
+    const record = await fetchRecordById(AIRTABLE_TABLES.clientes, id);
+    return mapClienteDetalleRecord(record);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("Airtable error 404")) return null;
+    throw error;
+  }
+};
+
+const fetchOrdenesByIds = async (
+  recordIds: string[],
+  client = getClient()
+): Promise<OrdenClienteListado[]> => {
+  const ids = [...new Set(recordIds.map((id) => id.trim()).filter(Boolean))];
+  if (ids.length === 0) return [];
+
+  const allRecords: AirtableGenericRecord[] = [];
+  for (let index = 0; index < ids.length; index += 50) {
+    const chunk = ids.slice(index, index + 50);
+    const url = new URL(`${client.baseUrl}/${encodeURIComponent(AIRTABLE_TABLES.ordenes)}`);
+    url.searchParams.set("pageSize", "100");
+    url.searchParams.append(
+      "filterByFormula",
+      `OR(${chunk
+        .map((id) => `RECORD_ID()="${escapeAirtableFormulaString(id)}"`)
+        .join(",")})`
+    );
+    url.searchParams.append("sort[0][field]", "Fecha de Ingreso");
+    url.searchParams.append("sort[0][direction]", "desc");
+    ["ID", "Equipo", "Fecha de Ingreso", "Estado Actual"].forEach((field) =>
+      url.searchParams.append("fields[]", field)
+    );
+
+    const res = await fetch(url.toString(), {
+      headers: client.headers,
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Airtable error ${res.status}: ${text}`);
+    }
+
+    const data = (await res.json()) as { records?: AirtableGenericRecord[] };
+    allRecords.push(...(data.records ?? []));
+  }
+
+  return allRecords
+    .map(mapOrdenClienteRecord)
+    .sort((a, b) => (b.fechaIngreso || "").localeCompare(a.fechaIngreso || ""));
+};
+
+const fetchOrdenesByClienteFormula = async (
+  clienteRecordId: string,
+  client = getClient()
+): Promise<OrdenClienteListado[]> => {
+  const formulas = [
+    `FIND("${escapeAirtableFormulaString(clienteRecordId)}", ARRAYJOIN({Cliente})) > 0`,
+    `FIND("${escapeAirtableFormulaString(clienteRecordId)}", {Cliente} & "") > 0`,
+  ];
+  let lastError: Error | null = null;
+
+  for (const formula of formulas) {
+    const records: AirtableGenericRecord[] = [];
+    let offset: string | undefined;
+    try {
+      do {
+        const url = new URL(`${client.baseUrl}/${encodeURIComponent(AIRTABLE_TABLES.ordenes)}`);
+        url.searchParams.set("pageSize", "100");
+        url.searchParams.append("filterByFormula", formula);
+        url.searchParams.append("sort[0][field]", "Fecha de Ingreso");
+        url.searchParams.append("sort[0][direction]", "desc");
+        ["ID", "Equipo", "Fecha de Ingreso", "Estado Actual"].forEach((field) =>
+          url.searchParams.append("fields[]", field)
+        );
+        if (offset) {
+          url.searchParams.set("offset", offset);
+        }
+
+        const res = await fetch(url.toString(), {
+          headers: client.headers,
+          cache: "no-store",
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Airtable error ${res.status}: ${text}`);
+        }
+
+        const data = (await res.json()) as {
+          records?: AirtableGenericRecord[];
+          offset?: string;
+        };
+        records.push(...(data.records ?? []));
+        offset = data.offset;
+      } while (offset);
+
+      return records.map(mapOrdenClienteRecord);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error("Error inesperado");
+      lastError = err;
+      if (!isUnknownAirtableFieldError(err.message)) {
+        throw err;
+      }
+    }
+  }
+
+  throw lastError ?? new Error("No se pudieron cargar las órdenes del cliente");
+};
+
+export const fetchOrdenesByClienteId = async (
+  clienteRecordId: string
+): Promise<OrdenClienteListado[]> => {
+  const cliente = await fetchClienteById(clienteRecordId);
+  if (!cliente) {
+    throw new Error("Cliente no encontrado");
+  }
+
+  if (cliente.ordenesRelacionadas.length > 0) {
+    return fetchOrdenesByIds(cliente.ordenesRelacionadas);
+  }
+
+  return fetchOrdenesByClienteFormula(clienteRecordId);
+};
+
+export const updateClienteById = async (
+  recordId: string,
+  input: NuevoClienteInput
+): Promise<ClienteDetalle> => {
+  const id = recordId.trim();
+  const nombre = input.nombre.trim();
+  if (!id) {
+    throw new Error("Falta el id del cliente");
+  }
+  if (!nombre) {
+    throw new Error("El nombre del cliente es obligatorio");
+  }
+
+  const fieldVariants: Record<string, unknown>[] = [
+    {
+      Nombre: nombre,
+      "C\u00e9dula": input.cedula?.trim() ?? "",
+      "Tel\u00e9fono": input.telefono?.trim() ?? "",
+      Correo: input.correo?.trim() ?? "",
+      "Direcci\u00f3n": input.direccion?.trim() ?? "",
+      Notas: input.notas?.trim() ?? "",
+    },
+    {
+      Nombre: nombre,
+      Cedula: input.cedula?.trim() ?? "",
+      Telefono: input.telefono?.trim() ?? "",
+      Correo: input.correo?.trim() ?? "",
+      Direccion: input.direccion?.trim() ?? "",
+      Notas: input.notas?.trim() ?? "",
+    },
+  ];
+  let lastError: Error | null = null;
+
+  for (const fields of fieldVariants) {
+    try {
+      const updated = await patchRecordFields({
+        tableName: AIRTABLE_TABLES.clientes,
+        recordId: id,
+        fields,
+      });
+      return mapClienteDetalleRecord(updated);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error("Error inesperado");
+      lastError = err;
+      if (!isUnknownAirtableFieldError(err.message)) {
+        throw err;
+      }
+    }
+  }
+
+  throw lastError ?? new Error("No se pudo actualizar el cliente");
+};
+
+export const deleteClienteById = async (
+  recordId: string
+): Promise<{ deleted: true }> => {
+  const id = recordId.trim();
+  if (!id) {
+    throw new Error("Falta el id del cliente");
+  }
+
+  const cliente = await fetchClienteById(id);
+  if (!cliente) {
+    throw new Error("Cliente no encontrado");
+  }
+
+  const numeroOrdenes = cliente.numeroOrdenes ?? 0;
+  if (numeroOrdenes > 0 || cliente.ordenesRelacionadas.length > 0) {
+    throw new Error(
+      "Este cliente tiene órdenes registradas. Para conservar el historial, no se puede eliminar."
+    );
+  }
+
+  const ordenes = await fetchOrdenesByClienteFormula(id);
+  if (ordenes.length > 0) {
+    throw new Error(
+      "Este cliente tiene órdenes registradas. Para conservar el historial, no se puede eliminar."
+    );
+  }
+
+  await deleteRecordById({
+    tableName: AIRTABLE_TABLES.clientes,
+    recordId: id,
   });
+
+  return { deleted: true };
+};
+
+export const createOrdenReparacion = async ({
+  clienteId,
+  nuevoCliente,
+  orden,
+}: NuevaOrdenInput): Promise<OrdenCreadaResult> => {
+  const equipo = orden.equipo.trim();
+  const ingresaPor = orden.ingresaPor.trim();
+  if (!equipo) {
+    throw new Error("El equipo es obligatorio");
+  }
+  if (!ingresaPor) {
+    throw new Error("Ingresa Por es obligatorio");
+  }
+
+  let clienteRecordId = clienteId?.trim() || "";
+  if (!clienteRecordId) {
+    if (!nuevoCliente?.nombre?.trim()) {
+      throw new Error("Selecciona un cliente o registra uno nuevo");
+    }
+    const createdCliente = await createCliente(nuevoCliente);
+    clienteRecordId = createdCliente.id;
+  }
+
+  const fields: Record<string, unknown> = {
+    Cliente: [clienteRecordId],
+    Equipo: equipo,
+    "Ingresa Por": ingresaPor,
+    "Estado Actual": "Pendiente",
+    "Tipo Orden": "Servicio de Reparaci\u00f3n",
+  };
+
+  const accesorios = orden.accesorios?.trim();
+  if (accesorios) {
+    fields.Accesorios = accesorios;
+  }
+
+  const createdOrden = await createRecord(AIRTABLE_TABLES.ordenes, fields);
+  return {
+    ok: true,
+    ordenId: safeString(createdOrden.fields?.["ID"], createdOrden.id),
+    airtableRecordId: createdOrden.id,
+  };
 };
 
 // --- Detalle de orden principal ---
@@ -454,9 +1279,15 @@ export const fetchOrdenById = async (recordId: string): Promise<OrdenDetalle | n
     idVisible: safeString(f["ID"], payload.id),
     estadoActual: firstString(f["Estado Actual"], "Sin estado"),
     fechaIngreso: safeString(f["Fecha de Ingreso"], ""),
+    ultimaModificacion: pickStringField(
+      f,
+      ["Ultima Modificacion", "\u00daltima Modificacion", "\u00daltima Modificaci\u00f3n"],
+      ""
+    ),
     ingresaPor: safeString(f["Ingresa Por"], "No disponible"),
     tipoOrden,
     clienteNombre,
+    cedula: pickStringField(f, ["CedulaTXT", "C\u00e9dulaTXT", "Cedula", "C\u00e9dula"], "-"),
     telefono: pickStringField(f, ["TelefonoTXT", "Telefono"], "-"),
     equipo: safeString(f["Equipo"], "No disponible"),
     accesorios: safeString(f["Accesorios"], "No disponible"),
@@ -1241,6 +2072,38 @@ export const updateOrdenEstado = async ({
   return { estadoActual: nuevoEstado, historial };
 };
 
+export const markOrdenBajaInterna = async ({
+  ordenRecordId,
+  daysWaiting,
+}: {
+  ordenRecordId: string;
+  daysWaiting: number;
+}): Promise<{ estadoActual: EstadoOrden; historial: HistorialEstado }> => {
+  const estado: EstadoOrden = "Enviado a Reciclaje";
+  const client = getClient();
+  const urlOrden = `${client.baseUrl}/${encodeURIComponent(
+    AIRTABLE_TABLES.ordenes
+  )}/${encodeURIComponent(ordenRecordId)}`;
+
+  const resOrden = await fetch(urlOrden, {
+    method: "PATCH",
+    headers: client.headers,
+    body: JSON.stringify({ fields: { "Estado Actual": estado } }),
+  });
+
+  if (!resOrden.ok) {
+    const text = await resOrden.text();
+    throw new Error(`Airtable error ${resOrden.status}: ${text}`);
+  }
+
+  const historial = await createHistorialEntrada({
+    ordenRecordId,
+    estadoNuevo: `Orden marcada como baja interna por política de abandono. Cliente sin respuesta durante ${daysWaiting} días.`,
+  });
+
+  return { estadoActual: estado, historial };
+};
+
 // --- Escritura: actualizar nota interna ---
 export const updateOrdenNotaInterna = async ({
   ordenRecordId,
@@ -1472,37 +2335,71 @@ export const createHistorialEntrada = async ({
     throw new Error("El historial requiere un texto de estado");
   }
 
-  const fields: Record<string, unknown> = {
-    "Ã“rdenes de ReparaciÃ³n": [ordenRecordId],
-    "Estado Nuevo": texto,
-    "Creado desde App TÃ©cnico": true,
-  };
+  const ordenFieldCandidates = [
+    "Orden",
+    "Orden de Reparaci\u00f3n",
+    "\u00d3rdenes de Reparaci\u00f3n",
+  ];
+  const creadoDesdeAppFieldCandidates = [
+    "Creado desde App T\u00e9cnico",
+    "Creado desde App Tecnico",
+  ];
 
-  if (tecnicoNombre) {
-    fields["Tecnico Nombre"] = tecnicoNombre;
+  let data:
+    | {
+        id: string;
+        fields: Record<string, unknown>;
+        createdTime?: string;
+      }
+    | null = null;
+  let lastError: Error | null = null;
+
+  for (const ordenField of ordenFieldCandidates) {
+    for (const creadoDesdeAppField of creadoDesdeAppFieldCandidates) {
+      const fields: Record<string, unknown> = {
+        [ordenField]: [ordenRecordId],
+        "Estado Nuevo": texto,
+        [creadoDesdeAppField]: true,
+      };
+
+      if (tecnicoNombre) {
+        fields["Tecnico Nombre"] = tecnicoNombre;
+      }
+      if (tecnicoId) {
+        fields["Tecnico"] = [tecnicoId];
+      }
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          ...client.headers,
+        },
+        body: JSON.stringify({ fields }),
+      });
+
+      if (res.ok) {
+        data = (await res.json()) as {
+          id: string;
+          fields: Record<string, unknown>;
+          createdTime?: string;
+        };
+        break;
+      }
+
+      const text = await res.text();
+      const error = new Error(`Airtable error ${res.status}: ${text}`);
+      lastError = error;
+      if (!isUnknownAirtableFieldError(error.message)) {
+        throw error;
+      }
+    }
+
+    if (data) break;
   }
-  if (tecnicoId) {
-    fields["Tecnico"] = [tecnicoId];
+
+  if (!data) {
+    throw lastError ?? new Error("No se pudo crear la entrada de historial");
   }
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      ...client.headers,
-    },
-    body: JSON.stringify({ fields }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Airtable error ${res.status}: ${text}`);
-  }
-
-  const data = (await res.json()) as {
-    id: string;
-    fields: Record<string, unknown>;
-    createdTime?: string;
-  };
 
   return mapHistorialRecord(data, ordenRecordId);
 };

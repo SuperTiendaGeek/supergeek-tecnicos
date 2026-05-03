@@ -9,6 +9,7 @@ type StatusFilterDropdownProps = {
   label?: string;
   className?: string;
   dropdownClassName?: string;
+  buttonClassName?: string;
 };
 
 export function StatusFilterDropdown({
@@ -18,6 +19,7 @@ export function StatusFilterDropdown({
   label = "Filtrar por estado",
   className = "",
   dropdownClassName = "",
+  buttonClassName = "",
 }: StatusFilterDropdownProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
@@ -46,7 +48,7 @@ export function StatusFilterDropdown({
         onClick={() => setOpen((v) => !v)}
         className={`${
           label ? "mt-2" : ""
-        } relative w-full rounded-lg border border-[#e3fc02] bg-[#121212] px-4 py-2.5 text-left text-sm font-semibold text-zinc-200 shadow-[0_10px_24px_rgba(0,0,0,0.35)] flex items-center justify-between transition hover:border-[#f3ff56] focus:outline-none focus:ring-2 focus:ring-[#e3fc02]/60`}
+        } relative w-full rounded-lg border border-[#e3fc02] bg-[#121212] px-4 py-2.5 text-left text-sm font-semibold text-zinc-200 shadow-[0_10px_24px_rgba(0,0,0,0.35)] flex items-center justify-between transition hover:border-[#f3ff56] focus:outline-none focus:ring-2 focus:ring-[#e3fc02]/60 ${buttonClassName}`}
       >
         <span className="truncate">{selectedLabel}</span>
         <svg

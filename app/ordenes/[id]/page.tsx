@@ -7,6 +7,9 @@ import { useParams } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { ESTADOS_ORDEN, EstadoOrden } from "@/types";
 import { StatusFilterDropdown } from "@/components/ui/StatusFilterDropdown";
+import { getAbandonmentStatus } from "@/lib/orders/abandonmentPolicy";
+import { buildAbandonmentWhatsAppMessage } from "@/lib/orders/abandonmentWhatsApp";
+import { buildWhatsAppUrl } from "@/lib/whatsapp";
 
 type HistorialItem = {
   id: string;
@@ -81,9 +84,11 @@ type OrdenDetalle = {
   idVisible: string;
   estadoActual: string;
   fechaIngreso: string;
+  ultimaModificacion: string;
   ingresaPor: string;
   tipoOrden: string;
   clienteNombre: string;
+  cedula: string;
   telefono: string;
   equipo: string;
   accesorios: string;
@@ -390,6 +395,106 @@ const WhatsappIcon = ({ className = "h-4 w-4" }: { className?: string }) => (
   </svg>
 );
 
+const PrintIcon = ({ className = "h-4 w-4" }: { className?: string }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.7"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M6 9V2h12v7" />
+    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+    <path d="M6 14h12v8H6z" />
+    <path d="M8 18h8" />
+  </svg>
+);
+
+const PhoneIcon = ({ className = "h-4 w-4" }: { className?: string }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.7"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.35 1.9.67 2.8a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.28-1.24a2 2 0 0 1 2.11-.45c.9.32 1.84.54 2.8.67A2 2 0 0 1 22 16.92Z" />
+  </svg>
+);
+
+const CalendarIcon = ({ className = "h-4 w-4" }: { className?: string }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.7"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <rect x="3" y="4" width="18" height="18" rx="2" />
+    <path d="M16 2v4" />
+    <path d="M8 2v4" />
+    <path d="M3 10h18" />
+  </svg>
+);
+
+const ToolsIcon = ({ className = "h-4 w-4" }: { className?: string }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.7"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="m14.7 6.3 3-3a3.4 3.4 0 0 1 1.5 5.7l-2.1 2.1 3.8 3.8-3 3-3.8-3.8-6.2 6.2a2.1 2.1 0 0 1-3-3l6.2-6.2-4-4H5V5h2.1l4 4 2.1-2.1a3.4 3.4 0 0 1 1.5-.6Z" />
+    <path d="m5 5 4 4" />
+  </svg>
+);
+
+const DesktopIcon = ({ className = "h-4 w-4" }: { className?: string }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.7"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <rect x="2" y="4" width="13" height="10" rx="1.8" />
+    <path d="M6 19h6" />
+    <path d="M9 14v5" />
+    <rect x="18" y="5" width="4" height="15" rx="1.2" />
+    <path d="M20 16h.01" />
+  </svg>
+);
+
+const UsbIcon = ({ className = "h-4 w-4" }: { className?: string }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.7"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M7 3h4v5H7z" />
+    <path d="M9 8v5a3 3 0 0 0 3 3h2.5a3.5 3.5 0 0 1 3.5 3.5V21" />
+    <path d="M18 21h3" />
+    <path d="M19.5 18v3" />
+    <path d="M9 13H6a3 3 0 0 0-3 3v3" />
+    <path d="M3 19h3" />
+  </svg>
+);
+
 const TrashIcon = ({ className = "h-4 w-4" }: { className?: string }) => (
   <svg
     viewBox="0 0 24 24"
@@ -538,8 +643,24 @@ export default function OrdenDetallePage() {
   const [abonoSaving, setAbonoSaving] = useState(false);
   const [abonoError, setAbonoError] = useState<string | null>(null);
   const [abonoMessage, setAbonoMessage] = useState<string | null>(null);
+  const [bajaModalOpen, setBajaModalOpen] = useState(false);
+  const [bajaSaving, setBajaSaving] = useState(false);
+  const [bajaError, setBajaError] = useState<string | null>(null);
   const lineDeleteActionButtonClass =
-    "inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-800 bg-zinc-900/60 text-zinc-300 hover:text-white hover:border-zinc-700 transition focus:outline-none focus:ring-1 focus:ring-[#e3fc02] disabled:opacity-50 disabled:cursor-not-allowed";
+    "inline-flex h-8 w-8 items-center justify-center rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-card)] text-[var(--sg-text-secondary)] transition hover:border-[var(--sg-danger)] hover:bg-[var(--sg-danger-soft)] hover:text-[var(--sg-danger)] focus:outline-none focus:ring-1 focus:ring-[var(--sg-lime)] disabled:cursor-not-allowed disabled:opacity-50";
+
+  const abandonmentStatus = useMemo(
+    () => (orden ? getAbandonmentStatus(orden) : getAbandonmentStatus({})),
+    [orden]
+  );
+  const abandonmentWhatsAppUrl = useMemo(() => {
+    if (!orden || abandonmentStatus.level === "none") return null;
+
+    return buildWhatsAppUrl(
+      orden.telefono,
+      buildAbandonmentWhatsAppMessage(orden, abandonmentStatus)
+    );
+  }, [abandonmentStatus, orden]);
 
   type FetchDataOptions = {
     showLoading?: boolean;
@@ -1312,6 +1433,42 @@ export default function OrdenDetallePage() {
     }
   };
 
+  const handleMarcarBajaInterna = async () => {
+    if (!orden || bajaSaving || abandonmentStatus.level !== "critical") return;
+
+    setBajaSaving(true);
+    setBajaError(null);
+    try {
+      const res = await fetch(`/api/ordenes/${encodeURIComponent(id ?? "")}/baja-interna`, {
+        method: "PATCH",
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "No se pudo marcar la baja interna");
+      }
+
+      setOrden((prev) =>
+        prev
+          ? {
+              ...prev,
+              estadoActual: json.data?.estadoActual ?? "Enviado a Reciclaje",
+              historial: json.data?.historial
+                ? [...prev.historial, json.data.historial]
+                : prev.historial,
+            }
+          : prev
+      );
+      setEstadoSeleccionado("Enviado a Reciclaje");
+      setBajaModalOpen(false);
+      setEstadoMessage("Orden marcada como baja interna");
+      setTimeout(() => setEstadoMessage(null), 1800);
+    } catch (err) {
+      setBajaError(err instanceof Error ? err.message : "Error desconocido");
+    } finally {
+      setBajaSaving(false);
+    }
+  };
+
   const replaceHistorialItem = (updated: HistorialItem) => {
     setOrden((prev) =>
       prev
@@ -1671,8 +1828,8 @@ export default function OrdenDetallePage() {
       subtitle="Vista de solo lectura conectada a Airtable"
       active="ordenes"
     >
-      <div className="w-full max-w-7xl space-y-6">
-        {loading && <div className="text-sm text-zinc-300">Cargando orden...</div>}
+      <div className="w-full max-w-7xl space-y-8">
+        {loading && <div className="text-sm text-[var(--sg-text-secondary)]">Cargando orden...</div>}
 
         {error && (
           <div className="text-sm text-red-400">
@@ -1681,112 +1838,271 @@ export default function OrdenDetallePage() {
         )}
 
         {!loading && !error && orden && (
-          <div className="space-y-6">
-            <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(360px,0.9fr)]">
-              <div className="min-w-0 space-y-6">
-                <section className="rounded-2xl border border-zinc-800 bg-gradient-to-br from-[#141414] via-[#101010] to-[#171717] px-6 py-6 shadow-[0_16px_44px_rgba(0,0,0,0.35)]">
-              <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-                <div className="space-y-3">
-                  <p className="text-3xl font-extrabold text-white leading-tight tracking-tight">
-                    {orden.idVisible}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-3 text-sm text-zinc-200">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="text-lg font-semibold text-white">
-                        {orden.clienteNombre || "Cliente no disponible"}
-                      </span>
-                      <span className="text-sm text-zinc-400">{orden.telefono || "TelÃ©fono no disponible"}</span>
-                    </div>
-                    {buildWhatsAppLink(orden.telefono) && (
-                      <a
-                        href={buildWhatsAppLink(orden.telefono) ?? undefined}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[#e3fc02] text-black hover:brightness-95 transition shadow-[0_10px_24px_rgba(227,252,2,0.2)]"
-                        title="Abrir WhatsApp"
-                      >
-                        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
-                          <path d="M20.52 3.48A11.86 11.86 0 0 0 12.04 0C5.5.03.17 5.36.2 11.92c0 2.09.55 4.12 1.6 5.92L0 24l6.33-1.65A11.9 11.9 0 0 0 12 24h.05c6.56-.03 11.89-5.36 11.92-11.92.02-3.18-1.21-6.17-3.45-8.6ZM12 21.3h-.04a9.3 9.3 0 0 1-4.74-1.3l-.34-.2-3.76.98 1-3.67-.22-.38A9.25 9.25 0 0 1 2.7 12c-.03-5.13 4.13-9.31 9.26-9.33h.04c2.48 0 4.82.96 6.57 2.7a9.21 9.21 0 0 1 2.7 6.6c-.03 5.13-4.2 9.3-9.33 9.33Zm5.1-6.96c-.28-.14-1.65-.81-1.9-.91-.25-.09-.43-.14-.6.14-.17.28-.69.91-.85 1.1-.16.2-.31.21-.59.07-.28-.14-1.2-.44-2.28-1.41-.84-.75-1.4-1.67-1.57-1.95-.16-.28-.02-.43.12-.57.12-.12.28-.31.42-.46.14-.16.18-.28.28-.47.09-.2.05-.35-.02-.49-.07-.14-.6-1.45-.82-1.98-.22-.53-.44-.45-.6-.46l-.51-.01c-.17 0-.45.07-.68.35-.23.28-.89.87-.89 2.12 0 1.25.91 2.46 1.04 2.63.14.19 1.77 2.7 4.3 3.79.6.26 1.07.42 1.43.54.6.19 1.15.16 1.58.1.48-.07 1.48-.6 1.69-1.18.21-.57.21-1.06.14-1.17-.07-.1-.25-.17-.53-.31Z" />
-                        </svg>
-                      </a>
-                    )}
+          <div className="space-y-8">
+            <section className="flex flex-col gap-4 rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-card-elevated)] px-5 py-4 shadow-[var(--sg-shadow-card)] md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sg-text-muted)]">
+                  Gestión de reparación
+                </p>
+                <h2 className="mt-1 flex flex-wrap items-center gap-3 text-2xl font-extrabold uppercase tracking-tight text-[var(--sg-text-primary)]">
+                  <span>{orden.idVisible} - {orden.clienteNombre || "Cliente no disponible"}</span>
+                </h2>
+              </div>
+              <div className="flex flex-col items-start gap-1 md:items-end">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div
+                    className={`relative w-56 ${
+                      estadoSaving || loading ? "pointer-events-none opacity-70" : ""
+                    }`}
+                  >
+                    <StatusFilterDropdown
+                      value={estadoSeleccionado}
+                      onChange={(value) => handleEstadoChange(value as EstadoOrden)}
+                      options={ESTADOS_ORDEN.map((estado) => ({
+                        value: estado,
+                        label: estado,
+                      }))}
+                      label=""
+                      className="text-left"
+                      dropdownClassName="max-w-[280px]"
+                      buttonClassName="!h-[26px] !rounded-[var(--sg-radius-sm)] !px-3 !py-0 !text-xs !font-extrabold !uppercase !tracking-wide !text-[var(--sg-lime)] !shadow-none"
+                    />
                   </div>
-                  <p className="text-sm text-zinc-300 mt-1">
-                    {(orden.equipo || "Equipo no especificado") +
-                      (orden.accesorios ? ` / ${orden.accesorios}` : "")}
-                  </p>
+                  <Link
+                    href="/ordenes"
+                    className="inline-flex h-[26px] items-center justify-center rounded-[var(--sg-radius-sm)] border border-[var(--sg-lime)] bg-[var(--sg-lime)] px-3 text-xs font-extrabold uppercase tracking-wide text-[var(--sg-text-on-accent)] transition hover:brightness-95"
+                  >
+                    Volver a órdenes
+                  </Link>
                 </div>
-
-                <div className="flex flex-col gap-3 text-xs text-zinc-300 items-end w-full max-w-xs lg:max-w-sm self-start lg:self-auto">
-                  <div className="flex flex-wrap gap-4 md:justify-end text-[13px] text-zinc-400">
-                    <span>Ingreso: {formatDate(orden.fechaIngreso)}</span>
-                    <span>Tipo: {orden.tipoOrden || "No disponible"}</span>
+                {(estadoSaving || estadoMessage || estadoError) && (
+                  <div className="min-h-4 text-[11px] text-[var(--sg-text-muted)]">
+                    {estadoSaving && <span className="text-[var(--sg-lime)]">Guardando...</span>}
+                    {!estadoSaving && estadoMessage && <span>{estadoMessage}</span>}
+                    {estadoError && <span className="text-red-400">{estadoError}</span>}
                   </div>
-                  <div className="flex flex-col items-start gap-1 lg:items-end w-full">
-                    <div
-                      className={`w-full ${
-                        estadoSaving || loading ? "opacity-70 pointer-events-none" : ""
-                      }`}
-                    >
-                      <StatusFilterDropdown
-                        value={estadoSeleccionado}
-                        onChange={(value) => handleEstadoChange(value as EstadoOrden)}
-                        options={ESTADOS_ORDEN.map((estado) => ({
-                          value: estado,
-                          label: estado,
-                        }))}
-                        label="Estado actual"
-                        className="max-w-[260px] w-full ml-auto text-right"
-                        dropdownClassName="max-w-[260px]"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2 text-[12px] text-zinc-400">
-                      {estadoSaving && <span className="text-[#e3fc02]">Guardando...</span>}
-                      {!estadoSaving && estadoMessage && <span>{estadoMessage}</span>}
-                      {estadoError && <span className="text-red-400">{estadoError}</span>}
-                    </div>
-                  </div>
-                </div>
+                )}
               </div>
             </section>
 
+            {abandonmentStatus.level !== "none" && (
+              <section
+                className={`rounded-[var(--sg-radius-md)] border px-5 py-4 shadow-[var(--sg-shadow-card)] ${
+                  abandonmentStatus.level === "critical"
+                    ? "border-[var(--sg-danger)] bg-[var(--sg-danger-soft)]"
+                    : "border-[var(--sg-warning)] bg-[var(--sg-warning-soft)]"
+                }`}
+              >
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <p
+                      className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${
+                        abandonmentStatus.level === "critical"
+                          ? "text-[var(--sg-danger)]"
+                          : "text-[var(--sg-warning)]"
+                      }`}
+                    >
+                      Alertas de orden
+                    </p>
+                    <h3 className="mt-1 text-lg font-extrabold text-[var(--sg-text-primary)]">
+                      {abandonmentStatus.level === "critical"
+                        ? "Cumple política para baja"
+                        : "Orden próxima a baja"}
+                    </h3>
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--sg-text-primary)]">
+                      {abandonmentStatus.message}
+                    </p>
+                    {abandonmentStatus.referenceDate && (
+                      <p className="mt-2 text-xs text-[var(--sg-text-secondary)]">
+                        Fecha de referencia: {formatDate(abandonmentStatus.referenceDate)}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 flex-col gap-2 md:items-end">
+                    {abandonmentWhatsAppUrl ? (
+                      <a
+                        href={abandonmentWhatsAppUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-[var(--sg-radius-md)] border border-[var(--sg-lime)] bg-[var(--sg-card)] px-4 text-sm font-semibold text-[var(--sg-text-primary)] transition hover:bg-[var(--sg-lime-soft)] hover:text-[var(--sg-lime)] focus:outline-none focus:ring-2 focus:ring-[var(--sg-lime)] focus:ring-offset-2 focus:ring-offset-[var(--sg-panel)]"
+                      >
+                        <WhatsappIcon className="h-4 w-4 text-[var(--sg-lime)]" />
+                        Enviar aviso por WhatsApp
+                      </a>
+                    ) : (
+                      <span className="inline-flex min-h-10 items-center rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-4 py-2 text-xs font-semibold text-[var(--sg-text-secondary)]">
+                        Cliente sin teléfono registrado
+                      </span>
+                    )}
+                    {abandonmentStatus.level === "critical" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBajaError(null);
+                          setBajaModalOpen(true);
+                        }}
+                        className="inline-flex h-10 shrink-0 items-center justify-center rounded-[var(--sg-radius-md)] border border-[var(--sg-danger)] bg-[var(--sg-card)] px-4 text-sm font-semibold text-[var(--sg-danger)] transition hover:bg-[var(--sg-danger-soft)]"
+                      >
+                        Marcar baja interna
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </section>
+            )}
+
+            <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(330px,0.85fr)]">
+              <div className="min-w-0 space-y-8">
+                <section className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-6 py-6 shadow-[var(--sg-shadow-card)]">
+                  <p className="border-b border-[var(--sg-divider)] pb-5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sg-text-muted)]">
+                    Información general
+                  </p>
+
+                  <div className="grid gap-7 pt-6 lg:grid-cols-[1fr_1.05fr_1fr] lg:gap-0">
+                    <div className="min-w-0 lg:pr-7">
+                      <span className="inline-flex rounded-[6px] border border-[var(--sg-border)] bg-[var(--sg-card-elevated)] px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--sg-text-muted)] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                        Cliente
+                      </span>
+                      <p className="mt-4 text-lg font-extrabold leading-tight text-[var(--sg-text-primary)]">
+                        {orden.clienteNombre || "Cliente no disponible"}
+                      </p>
+                      <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-[var(--sg-text-secondary)]">
+                        <PhoneIcon className="h-4 w-4 shrink-0 text-[var(--sg-text-muted)]" />
+                        <span>{orden.telefono || "Teléfono no disponible"}</span>
+                        {buildWhatsAppLink(orden.telefono) ? (
+                          <a
+                            href={buildWhatsAppLink(orden.telefono) ?? undefined}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-2 font-semibold text-[var(--sg-text-primary)] transition hover:text-[var(--sg-lime)] focus:outline-none focus:ring-2 focus:ring-[var(--sg-lime)] focus:ring-offset-2 focus:ring-offset-[var(--sg-card)]"
+                          >
+                            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[var(--sg-lime)] text-[var(--sg-text-on-accent)] shadow-[0_0_18px_rgba(227,252,2,0.38)]">
+                              <WhatsappIcon className="h-4 w-4" />
+                            </span>
+                            <span>WhatsApp</span>
+                          </a>
+                        ) : (
+                          <span className="inline-flex items-center gap-2 text-[var(--sg-text-muted)]">
+                            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[var(--sg-border)] bg-[var(--sg-panel)]">
+                              <WhatsappIcon className="h-4 w-4" />
+                            </span>
+                            <span>WhatsApp</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="min-w-0 border-t border-[var(--sg-divider)] pt-6 lg:border-l lg:border-t-0 lg:px-7 lg:pt-0">
+                      <span className="inline-flex rounded-[6px] border border-[var(--sg-border)] bg-[var(--sg-card-elevated)] px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--sg-text-muted)] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                        Datos de la orden
+                      </span>
+                      <div className="mt-5 space-y-6">
+                        <div className="flex items-start gap-4">
+                          <CalendarIcon className="mt-0.5 h-5 w-5 shrink-0 text-[var(--sg-text-muted)]" />
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--sg-text-muted)]">
+                              Fecha de ingreso:
+                            </p>
+                            <p className="mt-1 text-sm font-semibold leading-snug text-[var(--sg-text-primary)]">
+                              {formatDate(orden.fechaIngreso)}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-4">
+                          <ToolsIcon className="mt-0.5 h-5 w-5 shrink-0 text-[var(--sg-text-muted)]" />
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--sg-text-muted)]">
+                              Tipo de servicio:
+                            </p>
+                            <p className="mt-1 text-sm font-semibold leading-snug text-[var(--sg-text-primary)]">
+                              {orden.tipoOrden || "No disponible"}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="min-w-0 border-t border-[var(--sg-divider)] pt-6 lg:border-l lg:border-t-0 lg:pl-7 lg:pt-0">
+                      <span className="inline-flex rounded-[6px] border border-[var(--sg-border)] bg-[var(--sg-card-elevated)] px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--sg-text-muted)] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                        Dispositivo
+                      </span>
+                      <div className="mt-5 space-y-6">
+                        <div className="flex items-start gap-4">
+                          <DesktopIcon className="mt-0.5 h-5 w-5 shrink-0 text-[var(--sg-text-muted)]" />
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--sg-text-muted)]">
+                              Equipo:
+                            </p>
+                            <p className="mt-1 text-sm font-semibold leading-snug text-[var(--sg-text-primary)]">
+                              {orden.equipo || "Equipo no especificado"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-4">
+                          <UsbIcon className="mt-0.5 h-5 w-5 shrink-0 text-[var(--sg-text-muted)]" />
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--sg-text-muted)]">
+                              Accesorios:
+                            </p>
+                            <p className="mt-1 text-sm font-semibold leading-snug text-[var(--sg-text-primary)]">
+                              {orden.accesorios || "Sin accesorios registrados"}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
             <section className="grid gap-4 md:grid-cols-2">
-              <div className="rounded-md border border-zinc-800 bg-zinc-900/70 px-4 py-4 shadow-sm space-y-2">
-                <h3 className="text-sm font-semibold text-[#e3fc02]">Ingresa por</h3>
-                <p className="text-sm text-zinc-200 leading-6">
+              <div className="relative overflow-hidden rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-5 py-4 shadow-[var(--sg-shadow-card)]">
+                <div className="absolute inset-y-4 left-0 w-1 rounded-r-full bg-[var(--sg-lime)]" />
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-[var(--sg-lime)]">Ingresa por</h3>
+                <p className="text-sm leading-6 text-[var(--sg-text-secondary)]">
                   {orden.ingresaPor || "No disponible"}
                 </p>
               </div>
 
-              <div className="rounded-md border border-zinc-800 bg-zinc-900/70 px-4 py-4 shadow-sm space-y-2">
+              <div className="relative space-y-3 overflow-hidden rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-5 py-4 shadow-[var(--sg-shadow-card)]">
+                <div className="absolute inset-y-4 left-0 w-1 rounded-r-full bg-[var(--sg-lime)]" />
                 <div className="flex items-start justify-between gap-3">
-                  <h3 className="text-sm font-semibold text-[#e3fc02]">Nota interna</h3>
-                  {notaSaving && <span className="text-[11px] text-[#e3fc02]">Guardando...</span>}
+                  <h3 className="text-sm font-semibold uppercase tracking-wide text-[var(--sg-lime)]">Nota interna</h3>
+                  {notaSaving && <span className="text-[11px] text-[var(--sg-lime)]">Guardando...</span>}
                 </div>
                 <textarea
                   value={notaTexto}
                   onChange={(e) => setNotaTexto(e.target.value)}
                   onBlur={handleNotaBlur}
                   rows={4}
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white focus:border-[#e3fc02] focus:outline-none resize-none"
+                  className="w-full resize-none rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-3 py-2 text-sm text-[var(--sg-text-primary)] placeholder:text-[var(--sg-text-muted)] transition focus:border-[var(--sg-lime)] focus:outline-none"
                   placeholder="Escribe la nota interna"
                   disabled={notaSaving}
                 />
                 {notaError && <p className="text-xs text-red-400">{notaError}</p>}
                 {!notaError && orden.recomendaciones && (
-                  <p className="text-sm text-zinc-400">Recomendaciones: {orden.recomendaciones}</p>
+                  <p className="text-sm text-[var(--sg-text-muted)]">Recomendaciones: {orden.recomendaciones}</p>
                 )}
               </div>
             </section>
 
-            <section className="rounded-md border border-zinc-800 bg-zinc-900/70 px-5 py-5 shadow-sm space-y-6">
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-semibold text-[#e3fc02] tracking-wide">
-                  Historial de estados
-                </h3>
+            <section className="space-y-6 rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-5 py-5 shadow-[var(--sg-shadow-card)]">
+              <div className="flex items-center justify-between border-b border-[var(--sg-divider)] pb-4">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sg-text-muted)]">
+                    Actividad
+                  </p>
+                  <h3 className="mt-1 text-lg font-extrabold tracking-wide text-[var(--sg-text-primary)]">
+                    Historial de estados
+                  </h3>
+                </div>
+                <span className="rounded-full border border-[var(--sg-border)] bg-[var(--sg-panel)] px-3 py-1 text-xs font-semibold text-[var(--sg-text-secondary)]">
+                  {orden.historial.length} movimientos
+                </span>
               </div>
               {orden.historial.length === 0 ? (
-                <p className="text-sm text-zinc-300 italic">Sin historial registrado.</p>
+                <p className="rounded-[var(--sg-radius-md)] border border-dashed border-[var(--sg-border)] bg-[var(--sg-panel)] px-4 py-5 text-sm text-[var(--sg-text-secondary)]">
+                  Sin historial registrado.
+                </p>
               ) : (
                 <div className="space-y-4">
                   {orden.historial.map((item, idx) => {
@@ -1798,25 +2114,27 @@ export default function OrdenDetallePage() {
                     const isEditing = editingId === item.id;
                     const isMensajeLoading = mensajeLoading[item.id];
                     const actionButtonClass =
-                      "inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-800 bg-zinc-900/60 text-zinc-300 hover:text-white hover:border-zinc-700 transition focus:outline-none focus:ring-1 focus:ring-[#e3fc02] disabled:opacity-50 disabled:cursor-not-allowed";
+                      "inline-flex h-8 w-8 items-center justify-center rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] text-[var(--sg-text-secondary)] transition hover:border-[var(--sg-lime)] hover:text-[var(--sg-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--sg-lime)] disabled:cursor-not-allowed disabled:opacity-50";
                     return (
                       <div
                         key={item.id}
-                        className="grid grid-cols-[150px_48px_minmax(0,1fr)] items-start gap-5 text-sm text-white"
+                        className="grid grid-cols-[150px_48px_minmax(0,1fr)] items-start gap-5 text-sm text-[var(--sg-text-primary)]"
                       >
-                        <div className="text-xs text-zinc-400 leading-5 whitespace-nowrap pr-4 text-right">
+                        <div className="whitespace-nowrap pr-4 text-right text-xs leading-5 text-[var(--sg-text-muted)]">
+                          <span className="inline-block rounded-full border border-[var(--sg-border)] bg-[var(--sg-panel)] px-2.5 py-1">
                           {formatTimelineDate(item.fecha)}
+                          </span>
                         </div>
                         <div className="relative flex justify-center">
                           {idx !== orden.historial.length - 1 && (
-                            <span className="absolute left-1/2 top-5 bottom-[-32px] w-[2px] -translate-x-1/2 bg-[#e3fc02]/80" aria-hidden="true" />
+                            <span className="absolute bottom-[-32px] left-1/2 top-5 w-px -translate-x-1/2 bg-[var(--sg-lime)]" aria-hidden="true" />
                           )}
                           <span className="relative z-10 inline-flex h-3.5 w-3.5 -translate-x-[1px] items-center justify-center">
-                            <span className="absolute inline-flex h-3.5 w-3.5 rounded-full bg-[#e3fc02]" />
-                            <span className="absolute inline-flex h-3.5 w-3.5 rounded-full bg-[#e3fc02]/30 blur-[2px]" />
+                            <span className="absolute inline-flex h-3.5 w-3.5 rounded-full bg-[var(--sg-lime)]" />
+                            <span className="absolute inline-flex h-3.5 w-3.5 rounded-full border border-[var(--sg-lime)] opacity-40" />
                           </span>
                         </div>
-                        <div className="space-y-2 pl-1">
+                        <div className="space-y-2 border-b border-[var(--sg-divider)] pb-4 last:border-b-0">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0 space-y-1">
                               {isEditing ? (
@@ -1837,31 +2155,31 @@ export default function OrdenDetallePage() {
                                     }}
                                     onBlur={handleBlurEdicion}
                                     rows={2}
-                                    className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white focus:border-[#e3fc02] focus:outline-none resize-none"
+                                    className="w-full resize-none rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-3 py-2 text-sm text-[var(--sg-text-primary)] placeholder:text-[var(--sg-text-muted)] transition focus:border-[var(--sg-lime)] focus:outline-none"
                                     placeholder="Ajusta el estado"
                                     disabled={editingSaving}
                                   />
-                                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-zinc-500">
+                                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-[var(--sg-text-muted)]">
                                     <span>Enter guarda Â· Esc cancela</span>
-                                    {editingSaving && <span className="text-[#e3fc02]">Guardando...</span>}
+                                    {editingSaving && <span className="text-[var(--sg-lime)]">Guardando...</span>}
                                     {editingError && <span className="text-red-400">{editingError}</span>}
                                   </div>
                                 </div>
                               ) : (
-                                <p className="font-semibold text-white leading-5">{title}</p>
+                                <p className="font-semibold leading-5 text-[var(--sg-text-primary)]">{title}</p>
                               )}
                               {item.tecnicoNombre && !isEditing && (
-                                <div className="text-xs text-zinc-400 leading-4">
+                                <div className="text-xs leading-4 text-[var(--sg-text-muted)]">
                                   {item.tecnicoNombre}
                                 </div>
                               )}
                               {showNota && !isEditing && (
-                                <div className="text-sm text-zinc-300 leading-5">
+                                <div className="text-sm leading-5 text-[var(--sg-text-secondary)]">
                                   {notaLimpia}
                                 </div>
                               )}
                             </div>
-                            <div className="flex items-center gap-2 text-[12px] text-zinc-400 shrink-0 pt-1">
+                            <div className="flex shrink-0 items-center gap-2 pt-1 text-[12px] text-[var(--sg-text-muted)]">
                               <button
                                 type="button"
                                 onClick={() => handleStartEdit(item)}
@@ -1881,7 +2199,7 @@ export default function OrdenDetallePage() {
                                 disabled={isMensajeLoading || editingId === item.id}
                               >
                                 {isMensajeLoading ? (
-                                  <span className="h-3 w-3 animate-spin rounded-full border border-[#e3fc02]/70 border-t-transparent" />
+                                  <span className="h-3 w-3 animate-spin rounded-full border border-[var(--sg-lime)] border-t-transparent" />
                                 ) : (
                                   <RefreshIcon className="h-4 w-4" />
                                 )}
@@ -1890,7 +2208,7 @@ export default function OrdenDetallePage() {
                                 <button
                                   type="button"
                                   onClick={() => toggleMensajeVisible(item.id)}
-                                  className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900/70 px-2 py-1 text-[12px] font-semibold text-zinc-200 hover:border-zinc-700 hover:text-white transition focus:outline-none focus:ring-1 focus:ring-[#e3fc02]"
+                                  className="inline-flex items-center gap-1 rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-2 py-1 text-[12px] font-semibold text-[var(--sg-text-secondary)] transition hover:border-[var(--sg-lime)] hover:text-[var(--sg-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--sg-lime)]"
                                   title={mensajeVisible[item.id] ? "Ocultar mensaje" : "Ver mensaje"}
                                   aria-label={mensajeVisible[item.id] ? "Ocultar mensaje" : "Ver mensaje"}
                                 >
@@ -1906,7 +2224,7 @@ export default function OrdenDetallePage() {
                                   title="Enviar por WhatsApp"
                                   aria-label="Enviar por WhatsApp"
                                 >
-                                  <WhatsappIcon className="h-4 w-4 text-[#e3fc02]" />
+                                  <WhatsappIcon className="h-4 w-4 text-[var(--sg-lime)]" />
                                 </button>
                               )}
                               <button
@@ -1927,8 +2245,8 @@ export default function OrdenDetallePage() {
                               </button>
                             </div>
                           </div>
-                          <div className="flex flex-wrap items-center gap-3 text-[12px] text-zinc-400 pt-0.5">
-                            {isMensajeLoading && <span className="text-[#e3fc02]">Generando mensaje...</span>}
+                          <div className="flex flex-wrap items-center gap-3 border-t border-[var(--sg-divider)] pt-2 text-[12px] text-[var(--sg-text-muted)]">
+                            {isMensajeLoading && <span className="text-[var(--sg-lime)]">Generando mensaje...</span>}
                             {mensajeError[item.id] && (
                               <span className="text-red-400">{mensajeError[item.id]}</span>
                             )}
@@ -1936,21 +2254,21 @@ export default function OrdenDetallePage() {
                               <span className="text-red-400">{whatsappError[item.id]}</span>
                             )}
                             {!item.estadoGeneradoIA && !isMensajeLoading && (
-                              <span className="text-zinc-500">AÃºn sin mensaje IA</span>
+                              <span>AÃºn sin mensaje IA</span>
                             )}
                           </div>
                           {item.estadoGeneradoIA && mensajeVisible[item.id] && (
-                            <div className="mt-2 rounded-md border border-zinc-800 bg-zinc-900/90 px-3 py-2 text-sm text-zinc-200 leading-6">
+                            <div className="mt-2 rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-3 py-2 text-sm leading-6 text-[var(--sg-text-secondary)]">
                               {item.estadoGeneradoIA}
                             </div>
                           )}
                           {deleteConfirmId === item.id && (
-                            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950/80 px-3 py-2 text-[12px] text-zinc-200">
-                              <span className="text-zinc-400">Â¿Eliminar este estado del historial?</span>
+                            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-3 py-2 text-[12px] text-[var(--sg-text-secondary)]">
+                              <span className="text-[var(--sg-text-muted)]">Â¿Eliminar este estado del historial?</span>
                               <button
                                 type="button"
                                 onClick={() => setDeleteConfirmId(null)}
-                                className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300 hover:text-white hover:border-zinc-600 transition"
+                                className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] px-2 py-1 text-[var(--sg-text-secondary)] transition hover:border-[var(--sg-lime)] hover:text-[var(--sg-text-primary)]"
                                 disabled={deletingId === item.id}
                               >
                                 Cancelar
@@ -1958,7 +2276,7 @@ export default function OrdenDetallePage() {
                               <button
                                 type="button"
                                 onClick={() => handleDeleteConfirm(item.id)}
-                                className="rounded-md border border-red-500/70 bg-red-500/10 px-2 py-1 text-red-300 hover:bg-red-500/20 hover:text-red-100 transition disabled:opacity-60"
+                                className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-danger)] bg-[var(--sg-danger-soft)] px-2 py-1 text-[var(--sg-danger)] transition hover:brightness-110 disabled:opacity-60"
                                 disabled={deletingId === item.id}
                               >
                                 Eliminar
@@ -1980,19 +2298,19 @@ export default function OrdenDetallePage() {
                     setInlineEditing(true);
                     setTimeout(() => inlineInputRef.current?.focus(), 10);
                   }}
-                  className="w-full rounded border border-dashed border-[#e3fc02]/60 bg-transparent px-3 py-2 text-left text-sm font-semibold text-[#e3fc02] hover:border-[#e3fc02] hover:text-white transition mt-2"
+                  className="mt-2 w-full rounded-[var(--sg-radius-sm)] border border-dashed border-[var(--sg-lime)] bg-transparent px-3 py-2 text-left text-sm font-semibold text-[var(--sg-lime)] transition hover:bg-[var(--sg-lime-soft)] hover:text-[var(--sg-text-primary)]"
                 >
                   + Agregar estado
                 </button>
               ) : (
-                <div className="grid grid-cols-[150px_48px_minmax(0,1fr)] items-start gap-5 text-sm text-white mt-2">
-                  <div className="text-xs text-zinc-400 leading-5 whitespace-nowrap pr-4 text-right">
+                <div className="mt-2 grid grid-cols-[150px_48px_minmax(0,1fr)] items-start gap-5 text-sm text-[var(--sg-text-primary)]">
+                  <div className="whitespace-nowrap pr-4 text-right text-xs leading-5 text-[var(--sg-text-muted)]">
                     Ahora
                   </div>
                   <div className="relative flex justify-center">
                     <span className="relative flex h-3.5 w-3.5 items-center justify-center">
-                      <span className="absolute inline-flex h-3.5 w-3.5 rounded-full bg-[#e3fc02]" />
-                      <span className="absolute inline-flex h-3.5 w-3.5 rounded-full bg-[#e3fc02]/30 blur-[2px]" />
+                      <span className="absolute inline-flex h-3.5 w-3.5 rounded-full bg-[var(--sg-lime)]" />
+                      <span className="absolute inline-flex h-3.5 w-3.5 rounded-full border border-[var(--sg-lime)] opacity-40" />
                     </span>
                   </div>
                   <div className="space-y-1">
@@ -2016,16 +2334,16 @@ export default function OrdenDetallePage() {
                         if (avanceTexto.trim()) handleSaveInline();
                       }}
                       rows={2}
-                      className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white focus:border-[#e3fc02] focus:outline-none resize-none"
+                      className="w-full resize-none rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-3 py-2 text-sm text-[var(--sg-text-primary)] placeholder:text-[var(--sg-text-muted)] transition focus:border-[var(--sg-lime)] focus:outline-none"
                       placeholder="Escribe una actualizaciÃ³n rÃ¡pida"
                       disabled={saving}
                     />
                     {nuevoEstadoError && (
                       <p className="text-xs text-red-400">{nuevoEstadoError}</p>
                     )}
-                    <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+                    <div className="flex items-center gap-3 text-[11px] text-[var(--sg-text-muted)]">
                       <span>Enter para guardar Â· Esc para cancelar</span>
-                      {saving && <span className="text-[#e3fc02]">Guardando...</span>}
+                      {saving && <span className="text-[var(--sg-lime)]">Guardando...</span>}
                     </div>
                   </div>
                 </div>
@@ -2038,27 +2356,37 @@ export default function OrdenDetallePage() {
                   showRepuestoResults ? "z-[80]" : "z-10"
                 }`}
               >
-                <section className="relative isolate h-full overflow-visible rounded-md border border-zinc-800 bg-zinc-900/70 px-4 py-4 shadow-sm space-y-4">
-              <div>
-                <h3 className="text-sm font-semibold text-[#e3fc02]">Repuestos usados</h3>
-                <p className="text-xs text-zinc-400">
-                  {orden.repuestosPorOrden?.length ?? 0} lineas · Total cliente:{" "}
-                  {formatCurrency(
-                    (orden.repuestosPorOrden ?? []).reduce((acc, item) => {
-                      if (item.subtotalCliente !== null && item.subtotalCliente !== undefined) {
-                        return acc + item.subtotalCliente;
-                      }
-                      const qty = item.cantidad ?? 1;
-                      const price = item.precioCliente ?? 0;
-                      return acc + qty * price;
-                    }, 0)
-                  )}
-                </p>
+                <section className="relative isolate h-full space-y-5 overflow-visible rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-5 py-5 shadow-[var(--sg-shadow-card)]">
+              <div className="flex items-start justify-between gap-4 border-b border-[var(--sg-divider)] pb-4">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sg-text-muted)]">
+                    Inventario aplicado
+                  </p>
+                  <h3 className="mt-1 text-lg font-extrabold text-[var(--sg-text-primary)]">Repuestos usados</h3>
+                  <p className="mt-1 text-xs text-[var(--sg-text-muted)]">
+                    {orden.repuestosPorOrden?.length ?? 0} líneas registradas
+                  </p>
+                </div>
+                <div className="rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-3 py-2 text-right">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--sg-text-muted)]">Total cliente</p>
+                  <p className="mt-1 text-base font-extrabold text-[var(--sg-lime)]">
+                    {formatCurrency(
+                      (orden.repuestosPorOrden ?? []).reduce((acc, item) => {
+                        if (item.subtotalCliente !== null && item.subtotalCliente !== undefined) {
+                          return acc + item.subtotalCliente;
+                        }
+                        const qty = item.cantidad ?? 1;
+                        const price = item.precioCliente ?? 0;
+                        return acc + qty * price;
+                      }, 0)
+                    )}
+                  </p>
+                </div>
               </div>
 
               <div
                 ref={repuestoComposerRef}
-                className="relative z-30 isolate overflow-visible rounded-md border border-zinc-800 bg-zinc-950 p-3 space-y-3"
+                className="relative z-30 isolate space-y-3 overflow-visible rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-card-elevated)] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
               >
                 <div className="relative z-30">
                   <input
@@ -2085,28 +2413,28 @@ export default function OrdenDetallePage() {
                       }
                     }}
                     placeholder="Buscar repuesto..."
-                    className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-[#e3fc02] focus:outline-none"
+                    className="w-full rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-3 py-2 text-sm text-[var(--sg-text-primary)] placeholder:text-[var(--sg-text-muted)] transition focus:border-[var(--sg-lime)] focus:outline-none"
                   />
                   {showRepuestoResults && (
-                    <div className="absolute left-0 right-0 top-full z-[120] mt-2 max-h-64 overflow-auto overscroll-contain rounded-md border border-zinc-800 bg-zinc-950 shadow-2xl ring-1 ring-black/40">
+                    <div className="absolute left-0 right-0 top-full z-[120] mt-2 max-h-64 overflow-auto overscroll-contain rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-bg)] shadow-2xl ring-1 ring-black/40">
                       {catalogoRepuestosLoading ? (
-                        <p className="px-3 py-2 text-xs text-zinc-400">Cargando repuestos...</p>
+                        <p className="px-3 py-2 text-xs text-[var(--sg-text-muted)]">Cargando repuestos...</p>
                       ) : catalogoRepuestosError ? (
                         <p className="px-3 py-2 text-xs text-red-400">{catalogoRepuestosError}</p>
                       ) : (
                         <>
                           {filteredCatalogoRepuestos.length === 0 && (
-                            <p className="px-3 py-2 text-xs text-zinc-400">Sin coincidencias.</p>
+                            <p className="px-3 py-2 text-xs text-[var(--sg-text-muted)]">Sin coincidencias.</p>
                           )}
                           {filteredCatalogoRepuestos.map((item) => (
                             <button
                               key={item.id}
                               type="button"
                               onClick={() => selectRepuesto(item)}
-                              className="flex w-full flex-col items-start gap-1 border-b border-zinc-900 px-3 py-2 text-left hover:bg-zinc-900/80"
+                              className="flex w-full flex-col items-start gap-1 border-b border-[var(--sg-border)] px-3 py-2 text-left transition hover:bg-[var(--sg-card)]"
                             >
-                              <span className="text-sm font-semibold text-white">{item.nombre}</span>
-                              <span className="text-[11px] text-zinc-400">
+                              <span className="text-sm font-semibold text-[var(--sg-text-primary)]">{item.nombre}</span>
+                              <span className="text-[11px] text-[var(--sg-text-muted)]">
                                 {item.proveedorHabitual ?? "Proveedor no definido"} · {formatCurrency(item.precioSugeridoCliente)}
                               </span>
                             </button>
@@ -2117,7 +2445,7 @@ export default function OrdenDetallePage() {
                               setOpenCreateRepuestoModal(true);
                               setShowRepuestoResults(false);
                             }}
-                            className="w-full px-3 py-2 text-left text-sm font-semibold text-[#e3fc02] hover:bg-zinc-900/80"
+                            className="w-full px-3 py-2 text-left text-sm font-semibold text-[var(--sg-lime)] transition hover:bg-[var(--sg-card)]"
                           >
                             + Crear repuesto nuevo
                           </button>
@@ -2128,18 +2456,18 @@ export default function OrdenDetallePage() {
                 </div>
 
                 {selectedRepuesto && (
-                  <div className="rounded-md border border-zinc-800 bg-zinc-900/70 p-3 space-y-3">
+                  <div className="space-y-3 rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-card)] p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <p className="text-sm font-semibold text-white">{selectedRepuesto.nombre}</p>
-                        <p className="text-[11px] text-zinc-400">
+                        <p className="text-sm font-semibold text-[var(--sg-text-primary)]">{selectedRepuesto.nombre}</p>
+                        <p className="text-[11px] text-[var(--sg-text-muted)]">
                           {selectedRepuesto.proveedorHabitual ?? "Proveedor no definido"} · Precio sugerido {formatCurrency(selectedRepuesto.precioSugeridoCliente)}
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={() => setSelectedRepuesto(null)}
-                        className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:text-white"
+                        className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] px-2 py-1 text-[11px] text-[var(--sg-text-secondary)] transition hover:border-[var(--sg-lime)] hover:text-[var(--sg-text-primary)]"
                       >
                         Cambiar
                       </button>
@@ -2153,7 +2481,7 @@ export default function OrdenDetallePage() {
                         value={repuestoCantidad}
                         onChange={(e) => setRepuestoCantidad(e.target.value)}
                         placeholder="Cantidad"
-                        className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-white focus:border-[#e3fc02] focus:outline-none"
+                        className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-2 py-2 text-sm text-[var(--sg-text-primary)] placeholder:text-[var(--sg-text-muted)] transition focus:border-[var(--sg-lime)] focus:outline-none"
                       />
                       <input
                         type="number"
@@ -2162,7 +2490,7 @@ export default function OrdenDetallePage() {
                         value={repuestoPrecioCliente}
                         onChange={(e) => setRepuestoPrecioCliente(e.target.value)}
                         placeholder="Precio cliente real"
-                        className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-white focus:border-[#e3fc02] focus:outline-none"
+                        className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-2 py-2 text-sm text-[var(--sg-text-primary)] placeholder:text-[var(--sg-text-muted)] transition focus:border-[var(--sg-lime)] focus:outline-none"
                       />
                       <input
                         type="number"
@@ -2171,21 +2499,21 @@ export default function OrdenDetallePage() {
                         value={repuestoCostoProveedor}
                         onChange={(e) => setRepuestoCostoProveedor(e.target.value)}
                         placeholder="Costo proveedor real"
-                        className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-white focus:border-[#e3fc02] focus:outline-none"
+                        className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-2 py-2 text-sm text-[var(--sg-text-primary)] placeholder:text-[var(--sg-text-muted)] transition focus:border-[var(--sg-lime)] focus:outline-none"
                       />
                       <input
                         type="text"
                         value={repuestoProveedor}
                         onChange={(e) => setRepuestoProveedor(e.target.value)}
                         placeholder="Proveedor real"
-                        className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-white focus:border-[#e3fc02] focus:outline-none"
+                        className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-2 py-2 text-sm text-[var(--sg-text-primary)] placeholder:text-[var(--sg-text-muted)] transition focus:border-[var(--sg-lime)] focus:outline-none"
                       />
                       <input
                         type="text"
                         value={repuestoObservacion}
                         onChange={(e) => setRepuestoObservacion(e.target.value)}
                         placeholder="Observación"
-                        className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-white focus:border-[#e3fc02] focus:outline-none"
+                        className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-2 py-2 text-sm text-[var(--sg-text-primary)] placeholder:text-[var(--sg-text-muted)] transition focus:border-[var(--sg-lime)] focus:outline-none"
                       />
                     </div>
 
@@ -2196,7 +2524,7 @@ export default function OrdenDetallePage() {
                         type="button"
                         onClick={handleGuardarRepuesto}
                         disabled={repuestoSaving}
-                        className="rounded-md border border-[#e3fc02]/70 bg-[#e3fc02]/10 px-3 py-1.5 text-xs font-semibold text-[#e3fc02] hover:bg-[#e3fc02]/20 disabled:opacity-60"
+                        className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-lime)] bg-[var(--sg-lime-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--sg-lime)] transition hover:brightness-110 disabled:opacity-60"
                       >
                         {repuestoSaving ? "Guardando..." : "Guardar repuesto"}
                       </button>
@@ -2206,7 +2534,9 @@ export default function OrdenDetallePage() {
               </div>
 
               {(orden.repuestosPorOrden ?? []).length === 0 ? (
-                <p className="text-sm text-zinc-300 italic">Aun no se han registrado repuestos en esta orden.</p>
+                <p className="rounded-[var(--sg-radius-md)] border border-dashed border-[var(--sg-border)] bg-[var(--sg-panel)] px-4 py-5 text-sm text-[var(--sg-text-secondary)]">
+                  Aun no se han registrado repuestos en esta orden.
+                </p>
               ) : (
                 <div className="space-y-2">
                   {(orden.repuestosPorOrden ?? []).map((item) => {
@@ -2222,20 +2552,21 @@ export default function OrdenDetallePage() {
                     return (
                       <div
                         key={item.id}
-                        className="rounded-lg border border-zinc-800 bg-zinc-900/85 px-4 py-3 text-sm flex flex-col gap-2"
+                        className="relative flex flex-col gap-2 overflow-hidden rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-4 py-3 text-sm"
                       >
+                        <div className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-[var(--sg-lime)]" />
                         <div className="flex items-start justify-between gap-3">
                           <div className="space-y-1">
-                            <p className="font-semibold text-white leading-5">{item.repuestoNombre}</p>
-                            <p className="text-xs text-zinc-400">
+                            <p className="font-semibold leading-5 text-[var(--sg-text-primary)]">{item.repuestoNombre}</p>
+                            <p className="text-xs text-[var(--sg-text-secondary)]">
                               Cantidad: {qty} · Precio cliente: {formatCurrency(item.precioCliente)}
                             </p>
                             {(item.costoProveedor !== null || item.proveedor || item.observacion) && (
-                              <p className="text-xs text-zinc-500">
+                              <p className="text-xs text-[var(--sg-text-muted)]">
                                 Costo proveedor: {formatCurrency(item.costoProveedor)} · Proveedor: {item.proveedor ?? "-"}
                               </p>
                             )}
-                            {item.observacion && <p className="text-xs text-zinc-500">Obs: {item.observacion}</p>}
+                            {item.observacion && <p className="text-xs text-[var(--sg-text-muted)]">Obs: {item.observacion}</p>}
                           </div>
                           <div className="flex shrink-0 flex-col items-end gap-2">
                             <button
@@ -2255,16 +2586,16 @@ export default function OrdenDetallePage() {
                                 <TrashIcon className="h-4 w-4" />
                               )}
                             </button>
-                            <div className="text-right text-sm font-semibold text-white">{formatCurrency(subtotal)}</div>
+                            <div className="rounded-full border border-[var(--sg-border)] bg-[var(--sg-card)] px-3 py-1 text-right text-sm font-semibold text-[var(--sg-text-primary)]">{formatCurrency(subtotal)}</div>
                           </div>
                         </div>
                         {isConfirming && (
-                          <div className="mt-1 flex flex-wrap items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950/80 px-3 py-2 text-[12px] text-zinc-200">
-                            <span className="text-zinc-400">¿Eliminar este repuesto de la orden?</span>
+                          <div className="mt-1 flex flex-wrap items-center gap-2 rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-3 py-2 text-[12px] text-[var(--sg-text-secondary)]">
+                            <span className="text-[var(--sg-text-muted)]">¿Eliminar este repuesto de la orden?</span>
                             <button
                               type="button"
                               onClick={() => setRepuestoDeleteConfirmId(null)}
-                              className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300 hover:text-white hover:border-zinc-600 transition"
+                              className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] px-2 py-1 text-[var(--sg-text-secondary)] transition hover:border-[var(--sg-lime)] hover:text-[var(--sg-text-primary)]"
                               disabled={isDeleting}
                             >
                               Cancelar
@@ -2272,7 +2603,7 @@ export default function OrdenDetallePage() {
                             <button
                               type="button"
                               onClick={() => handleDeleteRepuestoConfirm(item.id)}
-                              className="rounded-md border border-red-500/70 bg-red-500/10 px-2 py-1 text-red-300 hover:bg-red-500/20 hover:text-red-100 transition disabled:opacity-60"
+                              className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-danger)] bg-[var(--sg-danger-soft)] px-2 py-1 text-[var(--sg-danger)] transition hover:brightness-110 disabled:opacity-60"
                               disabled={isDeleting}
                             >
                               Eliminar
@@ -2293,12 +2624,20 @@ export default function OrdenDetallePage() {
                   showServicioResults ? "z-[80]" : "z-10"
                 }`}
               >
-                <section className="relative isolate h-full overflow-visible rounded-md border border-zinc-800 bg-zinc-900/70 px-4 py-4 shadow-sm space-y-4">
-              <div>
+                <section className="relative isolate h-full space-y-5 overflow-visible rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-5 py-5 shadow-[var(--sg-shadow-card)]">
+              <div className="flex items-start justify-between gap-4 border-b border-[var(--sg-divider)] pb-4">
                 <div>
-                  <h3 className="text-sm font-semibold text-[#e3fc02]">Servicios</h3>
-                  <p className="text-xs text-zinc-400">
-                    {orden.serviciosPorOrden?.length ?? 0} lineas · Total:{" "}
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sg-text-muted)]">
+                    Mano de obra
+                  </p>
+                  <h3 className="mt-1 text-lg font-extrabold text-[var(--sg-text-primary)]">Servicios</h3>
+                  <p className="mt-1 text-xs text-[var(--sg-text-muted)]">
+                    {orden.serviciosPorOrden?.length ?? 0} líneas registradas
+                  </p>
+                </div>
+                <div className="rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-3 py-2 text-right">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--sg-text-muted)]">Total</p>
+                  <p className="mt-1 text-base font-extrabold text-[var(--sg-lime)]">
                     {formatCurrency(
                       (orden.serviciosPorOrden ?? []).reduce((acc, item) => acc + (item.costo ?? 0), 0)
                     )}
@@ -2308,7 +2647,7 @@ export default function OrdenDetallePage() {
 
               <div
                 ref={servicioComposerRef}
-                className="relative z-30 isolate overflow-visible rounded-md border border-zinc-800 bg-zinc-950 p-3 space-y-3"
+                className="relative z-30 isolate space-y-3 overflow-visible rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-card-elevated)] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
               >
                 <div className="relative z-30">
                   <input
@@ -2335,28 +2674,28 @@ export default function OrdenDetallePage() {
                       }
                     }}
                     placeholder="Buscar servicio..."
-                    className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-[#e3fc02] focus:outline-none"
+                    className="w-full rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-3 py-2 text-sm text-[var(--sg-text-primary)] placeholder:text-[var(--sg-text-muted)] transition focus:border-[var(--sg-lime)] focus:outline-none"
                   />
                   {showServicioResults && (
-                    <div className="absolute left-0 right-0 top-full z-[120] mt-2 max-h-64 overflow-auto overscroll-contain rounded-md border border-zinc-800 bg-zinc-950 shadow-2xl ring-1 ring-black/40">
+                    <div className="absolute left-0 right-0 top-full z-[120] mt-2 max-h-64 overflow-auto overscroll-contain rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-bg)] shadow-2xl ring-1 ring-black/40">
                       {catalogoServiciosLoading ? (
-                        <p className="px-3 py-2 text-xs text-zinc-400">Cargando servicios...</p>
+                        <p className="px-3 py-2 text-xs text-[var(--sg-text-muted)]">Cargando servicios...</p>
                       ) : catalogoServiciosError ? (
                         <p className="px-3 py-2 text-xs text-red-400">{catalogoServiciosError}</p>
                       ) : (
                         <>
                           {filteredCatalogoServicios.length === 0 && (
-                            <p className="px-3 py-2 text-xs text-zinc-400">Sin coincidencias.</p>
+                            <p className="px-3 py-2 text-xs text-[var(--sg-text-muted)]">Sin coincidencias.</p>
                           )}
                           {filteredCatalogoServicios.map((item) => (
                             <button
                               key={item.id}
                               type="button"
                               onClick={() => selectServicio(item)}
-                              className="flex w-full flex-col items-start gap-1 border-b border-zinc-900 px-3 py-2 text-left hover:bg-zinc-900/80"
+                              className="flex w-full flex-col items-start gap-1 border-b border-[var(--sg-border)] px-3 py-2 text-left transition hover:bg-[var(--sg-card)]"
                             >
-                              <span className="text-sm font-semibold text-white">{item.nombre}</span>
-                              <span className="text-[11px] text-zinc-400">Costo sugerido: {formatCurrency(item.costoSugerido)}</span>
+                              <span className="text-sm font-semibold text-[var(--sg-text-primary)]">{item.nombre}</span>
+                              <span className="text-[11px] text-[var(--sg-text-muted)]">Costo sugerido: {formatCurrency(item.costoSugerido)}</span>
                             </button>
                           ))}
                           <button
@@ -2365,7 +2704,7 @@ export default function OrdenDetallePage() {
                               setOpenCreateServicioModal(true);
                               setShowServicioResults(false);
                             }}
-                            className="w-full px-3 py-2 text-left text-sm font-semibold text-[#e3fc02] hover:bg-zinc-900/80"
+                            className="w-full px-3 py-2 text-left text-sm font-semibold text-[var(--sg-lime)] transition hover:bg-[var(--sg-card)]"
                           >
                             + Crear servicio nuevo
                           </button>
@@ -2376,18 +2715,18 @@ export default function OrdenDetallePage() {
                 </div>
 
                 {selectedServicio && (
-                  <div className="rounded-md border border-zinc-800 bg-zinc-900/70 p-3 space-y-3">
+                  <div className="space-y-3 rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-card)] p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <p className="text-sm font-semibold text-white">{selectedServicio.nombre}</p>
-                        <p className="text-[11px] text-zinc-400">
+                        <p className="text-sm font-semibold text-[var(--sg-text-primary)]">{selectedServicio.nombre}</p>
+                        <p className="text-[11px] text-[var(--sg-text-muted)]">
                           Costo sugerido: {formatCurrency(selectedServicio.costoSugerido)}
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={() => setSelectedServicio(null)}
-                        className="rounded-md border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300 hover:text-white"
+                        className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] px-2 py-1 text-[11px] text-[var(--sg-text-secondary)] transition hover:border-[var(--sg-lime)] hover:text-[var(--sg-text-primary)]"
                       >
                         Cambiar
                       </button>
@@ -2401,14 +2740,14 @@ export default function OrdenDetallePage() {
                         value={servicioCosto}
                         onChange={(e) => setServicioCosto(e.target.value)}
                         placeholder="Costo real"
-                        className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-white focus:border-[#e3fc02] focus:outline-none"
+                        className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-2 py-2 text-sm text-[var(--sg-text-primary)] placeholder:text-[var(--sg-text-muted)] transition focus:border-[var(--sg-lime)] focus:outline-none"
                       />
                       <input
                         type="text"
                         value={servicioObservacion}
                         onChange={(e) => setServicioObservacion(e.target.value)}
                         placeholder="Observación"
-                        className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-white focus:border-[#e3fc02] focus:outline-none"
+                        className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-2 py-2 text-sm text-[var(--sg-text-primary)] placeholder:text-[var(--sg-text-muted)] transition focus:border-[var(--sg-lime)] focus:outline-none"
                       />
                     </div>
 
@@ -2419,7 +2758,7 @@ export default function OrdenDetallePage() {
                         type="button"
                         onClick={handleGuardarServicio}
                         disabled={servicioSaving}
-                        className="rounded-md border border-[#e3fc02]/70 bg-[#e3fc02]/10 px-3 py-1.5 text-xs font-semibold text-[#e3fc02] hover:bg-[#e3fc02]/20 disabled:opacity-60"
+                        className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-lime)] bg-[var(--sg-lime-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--sg-lime)] transition hover:brightness-110 disabled:opacity-60"
                       >
                         {servicioSaving ? "Guardando..." : "Guardar servicio"}
                       </button>
@@ -2429,7 +2768,9 @@ export default function OrdenDetallePage() {
               </div>
 
               {(orden.serviciosPorOrden ?? []).length === 0 ? (
-                <p className="text-sm text-zinc-300 italic">Aun no se han registrado servicios en esta orden.</p>
+                <p className="rounded-[var(--sg-radius-md)] border border-dashed border-[var(--sg-border)] bg-[var(--sg-panel)] px-4 py-5 text-sm text-[var(--sg-text-secondary)]">
+                  Aun no se han registrado servicios en esta orden.
+                </p>
               ) : (
                 <div className="space-y-2">
                   {(orden.serviciosPorOrden ?? []).map((item) => {
@@ -2439,12 +2780,13 @@ export default function OrdenDetallePage() {
                     return (
                       <div
                         key={item.id}
-                        className="rounded-lg border border-zinc-800 bg-zinc-900/85 px-4 py-3 text-sm flex flex-col gap-2"
+                        className="relative flex flex-col gap-2 overflow-hidden rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-4 py-3 text-sm"
                       >
+                        <div className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-[var(--sg-lime)]" />
                         <div className="flex items-start justify-between gap-3">
                           <div className="space-y-1">
-                            <p className="font-semibold text-white leading-5">{item.servicioNombre}</p>
-                            {item.observacion && <p className="text-xs text-zinc-500">Obs: {item.observacion}</p>}
+                            <p className="font-semibold leading-5 text-[var(--sg-text-primary)]">{item.servicioNombre}</p>
+                            {item.observacion && <p className="text-xs text-[var(--sg-text-muted)]">Obs: {item.observacion}</p>}
                           </div>
                           <div className="flex shrink-0 flex-col items-end gap-2">
                             <button
@@ -2464,18 +2806,18 @@ export default function OrdenDetallePage() {
                                 <TrashIcon className="h-4 w-4" />
                               )}
                             </button>
-                            <div className="text-right text-sm font-semibold text-white">
+                            <div className="rounded-full border border-[var(--sg-border)] bg-[var(--sg-card)] px-3 py-1 text-right text-sm font-semibold text-[var(--sg-text-primary)]">
                               {formatCurrency(item.costo)}
                             </div>
                           </div>
                         </div>
                         {isConfirming && (
-                          <div className="mt-1 flex flex-wrap items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950/80 px-3 py-2 text-[12px] text-zinc-200">
-                            <span className="text-zinc-400">¿Eliminar este servicio de la orden?</span>
+                          <div className="mt-1 flex flex-wrap items-center gap-2 rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-3 py-2 text-[12px] text-[var(--sg-text-secondary)]">
+                            <span className="text-[var(--sg-text-muted)]">¿Eliminar este servicio de la orden?</span>
                             <button
                               type="button"
                               onClick={() => setServicioDeleteConfirmId(null)}
-                              className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300 hover:text-white hover:border-zinc-600 transition"
+                              className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] px-2 py-1 text-[var(--sg-text-secondary)] transition hover:border-[var(--sg-lime)] hover:text-[var(--sg-text-primary)]"
                               disabled={isDeleting}
                             >
                               Cancelar
@@ -2483,7 +2825,7 @@ export default function OrdenDetallePage() {
                             <button
                               type="button"
                               onClick={() => handleDeleteServicioConfirm(item.id)}
-                              className="rounded-md border border-red-500/70 bg-red-500/10 px-2 py-1 text-red-300 hover:bg-red-500/20 hover:text-red-100 transition disabled:opacity-60"
+                              className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-danger)] bg-[var(--sg-danger-soft)] px-2 py-1 text-[var(--sg-danger)] transition hover:brightness-110 disabled:opacity-60"
                               disabled={isDeleting}
                             >
                               Eliminar
@@ -2501,20 +2843,57 @@ export default function OrdenDetallePage() {
             </div>
           </div>
 
-          <aside className="min-w-0 xl:sticky xl:top-6">
-            <section className="rounded-2xl border border-zinc-700/70 bg-gradient-to-br from-zinc-900/95 via-zinc-900/90 to-zinc-950/95 px-5 py-5 shadow-[0_20px_46px_rgba(0,0,0,0.42)] ring-1 ring-zinc-800/60 backdrop-blur-sm sm:px-6 sm:py-6">
+          <aside className="min-w-0 space-y-5 xl:sticky xl:top-6">
+            <section className="rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-5 py-5 shadow-[var(--sg-shadow-card)]">
               <div className="space-y-2">
-                <h3 className="text-lg font-extrabold uppercase leading-tight tracking-wide text-zinc-100">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sg-text-muted)]">
+                  Documentos de taller
+                </p>
+                <h3 className="text-lg font-extrabold uppercase leading-tight tracking-wide text-[var(--sg-text-primary)]">
+                  Impresión
+                </h3>
+                <p className="max-w-[36ch] text-sm leading-6 text-[var(--sg-text-secondary)]">
+                  Tickets y etiqueta operativa para recepción e identificación del equipo.
+                </p>
+              </div>
+              <div className="mt-4 grid gap-2">
+                <a
+                  href={`/ordenes/${encodeURIComponent(id ?? "")}/imprimir/ticket`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-[var(--sg-radius-md)] border border-[var(--sg-lime)] bg-[var(--sg-lime)] px-4 text-sm font-extrabold text-[var(--sg-text-on-accent)] shadow-[0_10px_22px_rgba(227,252,2,0.18)] transition hover:brightness-95"
+                >
+                  <PrintIcon className="h-4 w-4" />
+                  Imprimir constancia
+                </a>
+                <a
+                  href={`/ordenes/${encodeURIComponent(id ?? "")}/imprimir/etiqueta`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-card-elevated)] px-4 text-sm font-semibold text-[var(--sg-text-primary)] transition hover:border-[var(--sg-lime)] hover:text-[var(--sg-lime)]"
+                >
+                  <PrintIcon className="h-4 w-4" />
+                  Imprimir etiqueta
+                </a>
+              </div>
+            </section>
+
+            <section className="rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-5 py-5 shadow-[var(--sg-shadow-card)]">
+              <div className="space-y-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sg-text-muted)]">
+                  Resumen financiero
+                </p>
+                <h3 className="text-lg font-extrabold uppercase leading-tight tracking-wide text-[var(--sg-text-primary)]">
                   Presupuesto y Abonos
                 </h3>
-                <p className="max-w-[36ch] text-sm leading-6 text-zinc-300">
+                <p className="max-w-[36ch] text-sm leading-6 text-[var(--sg-text-secondary)]">
                   Resumen financiero con campos NV y movimientos de abonos de esta orden.
                 </p>
               </div>
 
               {abonoMessage && (
-                <div className="mt-6 flex items-center gap-3 rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-4 py-2.5 text-sm text-emerald-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
-                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-300 text-zinc-950">
+                <div className="mt-6 flex items-center gap-3 rounded-[var(--sg-radius-sm)] border border-[var(--sg-success)] bg-[var(--sg-success-soft)] px-4 py-2.5 text-sm text-[var(--sg-text-primary)] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--sg-success)] text-[var(--sg-text-on-accent)]">
                     <svg aria-hidden="true" viewBox="0 0 20 20" className="h-3.5 w-3.5 fill-current">
                       <path d="M8.35 13.2 4.9 9.75l1.06-1.06 2.39 2.39 5.69-5.69 1.06 1.06-6.75 6.75Z" />
                     </svg>
@@ -2523,68 +2902,68 @@ export default function OrdenDetallePage() {
                 </div>
               )}
 
-              <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 sm:grid-rows-2">
-                <div className="border-b border-zinc-500/35 px-4 py-4 sm:border-r">
-                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-zinc-300">
+              <div className="mt-6 grid grid-cols-1 overflow-hidden rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-divider)] sm:grid-cols-3 sm:grid-rows-2">
+                <div className="border-b border-[var(--sg-divider)] bg-[var(--sg-card)] px-4 py-4 sm:border-r">
+                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-[var(--sg-text-secondary)]">
                     Repuestos (NV)
                   </p>
-                  <p className="mt-3 text-[1.55rem] font-extrabold leading-none text-zinc-50">
+                  <p className="mt-2 text-[1.25rem] font-extrabold leading-none text-[var(--sg-text-primary)]">
                     {formatCurrency(orden.costoTotalRepuestosNV)}
                   </p>
                 </div>
-                <div className="border-b border-zinc-500/35 px-4 py-4 sm:border-r">
-                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-zinc-300">
+                <div className="border-b border-[var(--sg-divider)] bg-[var(--sg-card)] px-4 py-4 sm:border-r">
+                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-[var(--sg-text-secondary)]">
                     Servicios (NV)
                   </p>
-                  <p className="mt-3 text-[1.55rem] font-extrabold leading-none text-zinc-400">
+                  <p className="mt-2 text-[1.25rem] font-extrabold leading-none text-[var(--sg-text-muted)]">
                     {formatCurrency(orden.costoTotalServiciosNV)}
                   </p>
                 </div>
-                <div className="border-b border-zinc-500/35 px-4 py-4 sm:border-b-0">
-                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-zinc-300">
+                <div className="border-b border-[var(--sg-divider)] bg-[var(--sg-warning-soft)] px-4 py-4 sm:border-b-0">
+                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-[var(--sg-text-secondary)]">
                     Saldo (NV)
                   </p>
-                  <p className="mt-3 text-[1.55rem] font-extrabold leading-none text-amber-300">
+                  <p className="mt-2 text-[1.25rem] font-extrabold leading-none text-[var(--sg-warning)]">
                     {formatCurrency(orden.saldoNV)}
                   </p>
                 </div>
-                <div className="border-b border-zinc-500/35 px-4 py-4 sm:border-r sm:border-b-0">
-                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-zinc-300">
+                <div className="border-b border-[var(--sg-divider)] bg-[var(--sg-lime-soft)] px-4 py-4 sm:border-b-0 sm:border-r">
+                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-[var(--sg-text-secondary)]">
                     Total a pagar (NV)
                   </p>
-                  <p className="mt-3 text-[1.55rem] font-extrabold leading-none text-[#e3fc02]">
+                  <p className="mt-2 text-[1.25rem] font-extrabold leading-none text-[var(--sg-lime)]">
                     {formatCurrency(orden.totalAPagarNV)}
                   </p>
                 </div>
-                <div className="border-b border-zinc-500/35 px-4 py-4 sm:border-r sm:border-b-0">
-                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-zinc-300">
+                <div className="border-b border-[var(--sg-divider)] bg-[var(--sg-card)] px-4 py-4 sm:border-b-0 sm:border-r">
+                  <p className="text-[0.72rem] font-medium uppercase leading-snug tracking-wide text-[var(--sg-text-secondary)]">
                     Total abonado (NV)
                   </p>
-                  <p className="mt-3 text-[1.55rem] font-extrabold leading-none text-zinc-400">
+                  <p className="mt-2 text-[1.25rem] font-extrabold leading-none text-[var(--sg-text-muted)]">
                     {formatCurrency(orden.totalAbonadoNV)}
                   </p>
                 </div>
-                <div className="hidden sm:block" aria-hidden="true" />
+                <div className="hidden bg-[var(--sg-card)] sm:block" aria-hidden="true" />
               </div>
 
               <div className="mt-7 space-y-3">
-                <h4 className="text-sm font-extrabold uppercase leading-tight tracking-wide text-zinc-200">
+                <h4 className="text-sm font-extrabold uppercase leading-tight tracking-wide text-[var(--sg-text-primary)]">
                   ABONOS REGISTRADOS ({(orden.abonosPorOrden ?? []).length} MOVIMIENTOS)
                 </h4>
 
                 {(orden.abonosPorOrden ?? []).length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-zinc-500/70 px-5 py-7 text-center">
-                    <div className="mx-auto mb-5 inline-flex h-11 w-11 items-center justify-center rounded-full border border-zinc-700 bg-zinc-950/45 text-zinc-400">
+                  <div className="rounded-[var(--sg-radius-md)] border border-dashed border-[var(--sg-border)] bg-[var(--sg-panel)] px-5 py-7 text-center">
+                    <div className="mx-auto mb-5 inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--sg-border)] bg-[var(--sg-card)] text-[var(--sg-text-muted)]">
                       <svg aria-hidden="true" viewBox="0 0 24 24" className="h-6 w-6" fill="none">
                         <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="1.8" />
                         <path d="M12 8v4l2 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                         <path d="M6 6l12 12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                       </svg>
                     </div>
-                    <p className="text-[0.95rem] font-semibold leading-6 text-zinc-100">
+                    <p className="text-[0.95rem] font-semibold leading-6 text-[var(--sg-text-primary)]">
                       Aún no hay abonos registrados para esta orden.
                     </p>
-                    <p className="mt-2 text-sm leading-6 text-zinc-400">
+                    <p className="mt-2 text-sm leading-6 text-[var(--sg-text-secondary)]">
                       Registra un abono para empezar a controlar el saldo.
                     </p>
                   </div>
@@ -2614,29 +2993,29 @@ export default function OrdenDetallePage() {
                       return (
                         <div
                           key={abono.id}
-                          className="rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-3"
+                          className="rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-3 py-3"
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0 space-y-1.5">
-                              <p className="text-sm font-semibold text-white">
+                              <p className="text-sm font-semibold text-[var(--sg-text-primary)]">
                                 {abono.idAbono ? `Abono ${abono.idAbono}` : "Abono registrado"}
                               </p>
-                              <p className="text-xs text-zinc-400">Fecha: {formatDate(abono.fecha)}</p>
-                              <p className="text-xs text-zinc-400">
+                              <p className="text-xs text-[var(--sg-text-secondary)]">Fecha: {formatDate(abono.fecha)}</p>
+                              <p className="text-xs text-[var(--sg-text-secondary)]">
                                 Metodo de pago: {abono.metodoPago || "No disponible"}
                               </p>
                               {abono.registradoPor && (
-                                <p className="text-xs text-zinc-500">
+                                <p className="text-xs text-[var(--sg-text-muted)]">
                                   Registrado por: {abono.registradoPor}
                                 </p>
                               )}
                               {abono.observacion && (
-                                <p className="text-xs text-zinc-500">
+                                <p className="text-xs text-[var(--sg-text-muted)]">
                                   Obs: {abono.observacion}
                                 </p>
                               )}
                             </div>
-                            <p className="shrink-0 text-lg font-extrabold text-white">
+                            <p className="shrink-0 text-lg font-extrabold text-[var(--sg-text-primary)]">
                               {formatCurrency(abono.monto)}
                             </p>
                           </div>
@@ -2652,7 +3031,7 @@ export default function OrdenDetallePage() {
                                     key={attachment.id ?? `${abono.id}-${idx}`}
                                     type="button"
                                     onClick={() => openComprobanteViewer(abono.id, attachment)}
-                                    className="group relative h-10 w-10 shrink-0 overflow-hidden rounded-md border border-zinc-800 bg-zinc-900 transition hover:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-[#e3fc02]"
+                                    className="group relative h-10 w-10 shrink-0 overflow-hidden rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-card)] transition hover:border-[var(--sg-lime)] focus:outline-none focus:ring-1 focus:ring-[var(--sg-lime)]"
                                     title={filename}
                                     aria-label={`Abrir comprobante ${idx + 1}`}
                                   >
@@ -2667,19 +3046,19 @@ export default function OrdenDetallePage() {
                                       />
                                     ) : (
                                       <div className="flex h-full w-full flex-col items-center justify-center gap-0.5">
-                                        <FileIcon className="h-3 w-3 text-zinc-300" />
+                                        <FileIcon className="h-3 w-3 text-[var(--sg-text-secondary)]" />
                                         <span
                                           className={`rounded px-1 py-0.5 text-[9px] font-bold tracking-wide ${
                                             isPdf
                                               ? "bg-red-500/20 text-red-300"
-                                              : "bg-zinc-700/80 text-zinc-200"
+                                              : "bg-[var(--sg-card-elevated)] text-[var(--sg-text-secondary)]"
                                           }`}
                                         >
                                           {isPdf ? "PDF" : "FILE"}
                                         </span>
                                       </div>
                                     )}
-                                    <span className="pointer-events-none absolute inset-0 hidden items-center justify-center bg-black/35 text-zinc-100 sm:flex sm:opacity-0 sm:transition sm:group-hover:opacity-100 sm:group-focus-visible:opacity-100">
+                                    <span className="pointer-events-none absolute inset-0 hidden items-center justify-center bg-black/35 text-[var(--sg-text-primary)] sm:flex sm:opacity-0 sm:transition sm:group-hover:opacity-100 sm:group-focus-visible:opacity-100">
                                       <EyeIcon className="h-3.5 w-3.5" />
                                     </span>
                                   </button>
@@ -2689,8 +3068,19 @@ export default function OrdenDetallePage() {
                           )}
 
                           <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <a
+                              href={`/ordenes/${encodeURIComponent(
+                                id ?? ""
+                              )}/abonos/${encodeURIComponent(abono.id)}/imprimir`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-2 py-1 text-[11px] font-semibold text-[var(--sg-text-secondary)] transition hover:border-[var(--sg-lime)] hover:text-[var(--sg-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--sg-lime)]"
+                            >
+                              <PrintIcon className="h-3.5 w-3.5" />
+                              Imprimir comprobante
+                            </a>
                             <label
-                              className={`inline-flex cursor-pointer items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:text-white hover:border-zinc-700 focus-within:outline-none focus-within:ring-1 focus-within:ring-[#e3fc02] ${
+                              className={`inline-flex cursor-pointer items-center gap-1 rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-2 py-1 text-[11px] font-semibold text-[var(--sg-text-secondary)] transition hover:border-[var(--sg-lime)] hover:text-[var(--sg-text-primary)] focus-within:outline-none focus-within:ring-1 focus-within:ring-[var(--sg-lime)] ${
                                 isAdjuntoUploading ? "opacity-60 pointer-events-none" : ""
                               }`}
                             >
@@ -2731,12 +3121,12 @@ export default function OrdenDetallePage() {
                             <p className="mt-2 text-xs text-red-400">{attachmentError}</p>
                           )}
                           {isConfirming && (
-                            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950/80 px-3 py-2 text-[12px] text-zinc-200">
-                              <span className="text-zinc-400">¿Eliminar este abono de la orden?</span>
+                            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] bg-[var(--sg-panel)] px-3 py-2 text-[12px] text-[var(--sg-text-secondary)]">
+                              <span className="text-[var(--sg-text-muted)]">¿Eliminar este abono de la orden?</span>
                               <button
                                 type="button"
                                 onClick={() => setAbonoDeleteConfirmId(null)}
-                                className="rounded-md border border-zinc-700 px-2 py-1 text-zinc-300 hover:text-white hover:border-zinc-600 transition"
+                                className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-border)] px-2 py-1 text-[var(--sg-text-secondary)] transition hover:border-[var(--sg-lime)] hover:text-[var(--sg-text-primary)]"
                                 disabled={isDeleting}
                               >
                                 Cancelar
@@ -2744,7 +3134,7 @@ export default function OrdenDetallePage() {
                               <button
                                 type="button"
                                 onClick={() => handleDeleteAbonoConfirm(abono.id)}
-                                className="rounded-md border border-red-500/70 bg-red-500/10 px-2 py-1 text-red-300 hover:bg-red-500/20 hover:text-red-100 transition disabled:opacity-60"
+                                className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-danger)] bg-[var(--sg-danger-soft)] px-2 py-1 text-[var(--sg-danger)] transition hover:brightness-110 disabled:opacity-60"
                                 disabled={isDeleting}
                               >
                                 Eliminar
@@ -2759,7 +3149,7 @@ export default function OrdenDetallePage() {
                 )}
               </div>
 
-              <div className="flex justify-center pt-4">
+              <div className="flex justify-center border-t border-[var(--sg-divider)] pt-5">
                 <button
                   type="button"
                   onClick={() => {
@@ -2767,7 +3157,7 @@ export default function OrdenDetallePage() {
                     setAbonoMessage(null);
                     setOpenAbonoModal(true);
                   }}
-                  className="inline-flex h-11 items-center justify-center rounded-lg bg-[#e3fc02] px-7 text-[0.95rem] font-extrabold uppercase tracking-wide text-black shadow-[0_12px_24px_rgba(227,252,2,0.23)] transition hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-[#e3fc02]/70 focus:ring-offset-2 focus:ring-offset-zinc-950"
+                  className="inline-flex h-11 items-center justify-center rounded-[var(--sg-radius-md)] border border-[var(--sg-lime)] bg-[var(--sg-lime)] px-7 text-[0.95rem] font-extrabold uppercase tracking-wide text-[var(--sg-text-on-accent)] shadow-[0_12px_24px_rgba(227,252,2,0.23)] transition hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-[var(--sg-lime)] focus:ring-offset-2 focus:ring-offset-[var(--sg-bg)]"
                 >
                   Registrar abono
                 </button>
@@ -2775,6 +3165,54 @@ export default function OrdenDetallePage() {
             </section>
           </aside>
         </div>
+
+            {bajaModalOpen && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 backdrop-blur-sm">
+                <div className="w-full max-w-lg rounded-xl border border-[var(--sg-border)] bg-[var(--sg-card)] p-5 shadow-2xl">
+                  <div className="space-y-2 border-b border-[var(--sg-divider)] pb-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--sg-danger)]">
+                      Confirmación requerida
+                    </p>
+                    <h3 className="text-lg font-extrabold text-[var(--sg-text-primary)]">
+                      Marcar baja interna
+                    </h3>
+                    <p className="text-sm leading-6 text-[var(--sg-text-secondary)]">
+                      Esta acción cambiará el estado a Enviado a Reciclaje y registrará un movimiento en el historial. No se ejecuta automáticamente.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3 py-4">
+                    <div className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-danger)] bg-[var(--sg-danger-soft)] px-4 py-3 text-sm leading-6 text-[var(--sg-text-primary)]">
+                      {abandonmentStatus.message}
+                    </div>
+                    {bajaError && (
+                      <p className="rounded-[var(--sg-radius-sm)] border border-[var(--sg-danger)] bg-[var(--sg-panel)] px-3 py-2 text-sm text-[var(--sg-danger)]">
+                        {bajaError}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col-reverse gap-3 border-t border-[var(--sg-divider)] pt-4 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setBajaModalOpen(false)}
+                      disabled={bajaSaving}
+                      className="inline-flex h-10 items-center justify-center rounded-[var(--sg-radius-md)] border border-[var(--sg-border)] bg-[var(--sg-card)] px-4 text-sm font-semibold text-[var(--sg-text-primary)] transition hover:border-[var(--sg-lime)] disabled:opacity-60"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleMarcarBajaInterna}
+                      disabled={bajaSaving}
+                      className="inline-flex h-10 items-center justify-center rounded-[var(--sg-radius-md)] border border-[var(--sg-danger)] bg-[var(--sg-danger-soft)] px-4 text-sm font-semibold text-[var(--sg-danger)] transition hover:brightness-110 disabled:opacity-60"
+                    >
+                      {bajaSaving ? "Marcando..." : "Confirmar baja interna"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {viewerAttachment && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm px-4">
@@ -3097,13 +3535,6 @@ export default function OrdenDetallePage() {
             )}
           </div>
         )}
-
-        <Link
-          href="/ordenes"
-          className="inline-flex items-center gap-2 text-sm font-semibold text-[#e3fc02] transition hover:text-white"
-        >
-          <span aria-hidden="true">â†</span> Volver al listado
-        </Link>
       </div>
     </AppShell>
   );

@@ -2,13 +2,12 @@ import Link from "next/link";
 import { useMemo } from "react";
 
 type SidebarProps = {
-  active?: "ordenes" | "nueva-orden" | "clientes" | "tecnicos" | "configuracion";
+  active?: "ordenes" | "clientes" | "tecnicos" | "configuracion";
 };
 
 const navItems: { key: SidebarProps["active"]; label: string; href?: string }[] = [
   { key: "ordenes", label: "Órdenes", href: "/ordenes" },
-  { key: "nueva-orden", label: "Nueva orden" },
-  { key: "clientes", label: "Clientes" },
+  { key: "clientes", label: "Clientes", href: "/clientes" },
   { key: "tecnicos", label: "Técnicos" },
   { key: "configuracion", label: "Configuración" },
 ];
